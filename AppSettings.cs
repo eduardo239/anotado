@@ -19,6 +19,13 @@ public sealed class AppSettings
     public bool ShowNavigation { get; set; } = true;
     public bool ShowDocumentPanel { get; set; } = true;
 
+    // Backup automático: a cada salvamento, uma cópia com data/hora vai para esta pasta
+    // (ex.: uma pasta dentro do Google Drive para computador).
+    public bool BackupEnabled { get; set; }
+    public string? BackupFolder { get; set; }
+    public int BackupKeep { get; set; } = 30; // 0 = manter todas
+    public DateTime? LastBackup { get; set; }
+
     private static AppSettings Load()
     {
         try

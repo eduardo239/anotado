@@ -98,6 +98,9 @@ public partial class MainWindow : Window
         OrientationBox.SelectedIndex = Settings.Landscape ? 1 : 0;
         MarginsBox.SelectedIndex = (int)Settings.Margins;
         GoalBox.Text = Settings.WordGoal.ToString(CultureInfo.CurrentCulture);
+        BackupToggle.IsChecked = Settings.BackupEnabled;
+        BackupKeepBox.SelectedIndex = Math.Max(0, Array.IndexOf(BackupKeepOptions, Settings.BackupKeep));
+        UpdateBackupUi();
         ApplyPanelsVisibility();
 
         NewDocument();
@@ -198,6 +201,9 @@ public partial class MainWindow : Window
             _dirty = false;
             UpdateDocumentInfo();
             ShowStatus($"Salvo às {DateTime.Now:HH:mm}");
+
+            if (Settings.BackupEnabled)
+                _ = RunBackupAsync(path); // em segundo plano: não trava a digitação
             return true;
         }
         catch (Exception ex)
@@ -929,6 +935,160 @@ public partial class MainWindow : Window
         if (_focusMode) SetFocusMode(false);
         ApplyPanelsVisibility();
         PageFormatBox.Focus();
+    }
+
+    // ================================================================ Backup automático
+
+    private static readonly int[] BackupKeepOptions = [10, 30, 100, 0]; // 0 = todas
+
+    private async Task RunBackupAsync(string savedFile)
+    {
+        var folder = Settings.BackupFolder;
+        if (string.IsNullOrEmpty(folder))
+        {
+            SetBackupStatus("Escolha uma pasta para ativar o backup.", ok: false);
+            return;
+        }
+
+        SetBackupStatus("Fazendo backup…", ok: true);
+        try
+        {
+            var keep = Settings.BackupKeep;
+            await Task.Run(() => BackupService.Backup(savedFile, folder, keep));
+            Settings.LastBackup = DateTime.Now;
+            Settings.Save();
+            UpdateBackupUi();
+        }
+        catch (Exception ex)
+        {
+            SetBackupStatus($"O último backup falhou: {ex.Message}", ok: false);
+            ShowStatus("Documento salvo, mas o backup falhou. Veja o painel Documento.");
+        }
+    }
+
+    private async void BackupToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (BackupToggle.IsChecked == true && string.IsNullOrEmpty(Settings.BackupFolder))
+        {
+            // Primeira vez: sugere a pasta do Google Drive para computador, se estiver instalado.
+            SetBackupStatus("Procurando o Google Drive…", ok: true);
+            var drive = await Task.Run(BackupService.FindGoogleDrive);
+            if (drive is not null)
+            {
+                Settings.BackupFolder = System.IO.Path.Combine(drive, "Anotado Backup");
+                ShowStatus("Pasta do Google Drive encontrada.");
+            }
+            else if (!ChooseBackupFolder("Google Drive não encontrado. Escolha a pasta de backup"))
+            {
+                BackupToggle.IsChecked = false;
+            }
+        }
+
+        Settings.BackupEnabled = BackupToggle.IsChecked == true;
+        Settings.Save();
+        UpdateBackupUi();
+
+        // Ao ligar, já guarda uma cópia do documento atual (se ele está salvo).
+        if (Settings.BackupEnabled && _filePath is not null && !_dirty)
+            await RunBackupAsync(_filePath);
+    }
+
+    private void ChooseBackupFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ChooseBackupFolder("Escolha a pasta de backup"))
+            return;
+
+        Settings.BackupEnabled = true;
+        BackupToggle.IsChecked = true;
+        Settings.Save();
+        UpdateBackupUi();
+    }
+
+    private bool ChooseBackupFolder(string title)
+    {
+        var dialog = new OpenFolderDialog { Title = title };
+        if (Settings.BackupFolder is { } current && Directory.Exists(current))
+            dialog.InitialDirectory = current;
+
+        if (dialog.ShowDialog(this) != true)
+            return false;
+
+        Settings.BackupFolder = dialog.FolderName;
+        return true;
+    }
+
+    private void OpenBackupFolder_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = Settings.BackupFolder;
+        if (string.IsNullOrEmpty(folder))
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{folder}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Não foi possível abrir a pasta: {ex.Message}");
+        }
+    }
+
+    private void BackupKeepBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || BackupKeepBox.SelectedIndex < 0) return;
+        Settings.BackupKeep = BackupKeepOptions[BackupKeepBox.SelectedIndex];
+        Settings.Save();
+    }
+
+    private void UpdateBackupUi()
+    {
+        var folder = Settings.BackupFolder;
+        var inDrive = folder is not null && BackupService.IsInGoogleDrive(folder);
+
+        BackupFolderText.Text = folder is null ? "Nenhuma pasta escolhida" : FriendlyFolderName(folder);
+        BackupFolderText.ToolTip = folder;
+        BackupFolderIcon.Text = inDrive ? "\uE753" : "\uE8B7"; // nuvem ou pasta
+        OpenBackupButton.IsEnabled = folder is not null;
+
+        if (!Settings.BackupEnabled)
+        {
+            SetBackupStatus("Desativado", ok: null);
+            PrivacyNoteText.Text = "Salvo só no seu computador.";
+            return;
+        }
+
+        PrivacyNoteText.Text = inDrive ? "Cópias de segurança no Google Drive." : "Cópias de segurança na pasta escolhida.";
+        if (Settings.LastBackup is { } last)
+        {
+            var when = last.Date == DateTime.Today ? $"hoje às {last:HH:mm}" : last.ToString("dd/MM 'às' HH:mm", CultureInfo.CurrentCulture);
+            SetBackupStatus($"Último backup {when}", ok: true);
+        }
+        else
+        {
+            SetBackupStatus("Ativo. A próxima cópia é feita ao salvar.", ok: true);
+        }
+    }
+
+    /// <summary>Mostra "Google Drive › Anotado Backup" em vez de "G:\Meu Drive\Anotado Backup".</summary>
+    private static string FriendlyFolderName(string folder)
+    {
+        foreach (var marker in new[] { "\\Meu Drive", "\\My Drive", "\\Google Drive" })
+        {
+            var index = folder.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) continue;
+            var rest = folder[(index + marker.Length)..].Trim('\\').Replace("\\", " › ");
+            return rest.Length == 0 ? "Google Drive" : $"Google Drive › {rest}";
+        }
+        return folder;
+    }
+
+    /// <summary>ok: true = verde, false = alerta, null = neutro.</summary>
+    private void SetBackupStatus(string text, bool? ok)
+    {
+        BackupStatusText.Text = text;
+        BackupDot.SetResourceReference(Shape.FillProperty,
+            ok switch { true => "AccentBrush", false => "WarningBrush", null => "MutedBrush" });
     }
 
     // ================================================================ Painéis, foco e tema

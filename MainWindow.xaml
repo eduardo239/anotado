@@ -467,9 +467,47 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- Backup automático -->
+                        <Border Height="1" Background="{DynamicResource LineBrush}" Margin="0,22,0,0" />
+                        <DockPanel Margin="0,20,0,12">
+                            <ToggleButton x:Name="BackupToggle" DockPanel.Dock="Right" Style="{StaticResource SwitchToggle}"
+                                          Click="BackupToggle_Click" ToolTip="Ligar ou desligar o backup automático" />
+                            <TextBlock Text="BACKUP AUTOMÁTICO" Style="{StaticResource SectionLabel}" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Text="A cada salvamento, uma cópia com data e hora vai para a pasta abaixo."
+                                   Style="{StaticResource Muted}" FontSize="11" TextWrapping="Wrap" />
+                        <Border Style="{StaticResource Card}" CornerRadius="6" Padding="10,8" Margin="0,10,0,0">
+                            <DockPanel>
+                                <TextBlock x:Name="BackupFolderIcon" Style="{StaticResource Icon}" FontSize="14" Text="&#xE8B7;"
+                                           Foreground="{DynamicResource MutedBrush}" Margin="0,0,10,0" />
+                                <TextBlock x:Name="BackupFolderText" Text="Nenhuma pasta escolhida" FontSize="12"
+                                           TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                            <Button Style="{StaticResource GhostButton}" Padding="10,5" FontSize="12" Content="Escolher pasta…" Click="ChooseBackupFolder_Click" />
+                            <Button x:Name="OpenBackupButton" Style="{StaticResource GhostButton}" Padding="10,5" FontSize="12" Content="Abrir" Margin="6,0,0,0"
+                                    Click="OpenBackupFolder_Click" ToolTip="Abrir a pasta de backup no Explorador de Arquivos" />
+                        </StackPanel>
+                        <DockPanel Margin="0,12,0,0">
+                            <ComboBox x:Name="BackupKeepBox" DockPanel.Dock="Right" Width="120" SelectionChanged="BackupKeepBox_SelectionChanged">
+                                <ComboBoxItem Content="10 cópias" />
+                                <ComboBoxItem Content="30 cópias" />
+                                <ComboBoxItem Content="100 cópias" />
+                                <ComboBoxItem Content="Todas" />
+                            </ComboBox>
+                            <TextBlock Text="Manter" Style="{StaticResource Muted}" VerticalAlignment="Center"
+                                       ToolTip="Quantas cópias de cada documento guardar. As mais antigas são apagadas." />
+                        </DockPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <Ellipse x:Name="BackupDot" Width="6" Height="6" Fill="{DynamicResource MutedBrush}" VerticalAlignment="Center" />
+                            <TextBlock x:Name="BackupStatusText" Text="Desativado" Style="{StaticResource Muted}" FontSize="11" Margin="8,0,0,0"
+                                       TextWrapping="Wrap" MaxWidth="200" />
+                        </StackPanel>
+
                         <StackPanel Orientation="Horizontal" Margin="4,22,0,0">
                             <TextBlock Style="{StaticResource Icon}" FontSize="12" Text="&#xEA18;" Foreground="{DynamicResource MutedBrush}" />
-                            <TextBlock Text="Salvo só no seu computador." Style="{StaticResource Muted}" FontSize="11" Margin="8,0,0,0" />
+                            <TextBlock x:Name="PrivacyNoteText" Text="Salvo só no seu computador." Style="{StaticResource Muted}" FontSize="11" Margin="8,0,0,0" />
                         </StackPanel>
                     </StackPanel>
                 </ScrollViewer>

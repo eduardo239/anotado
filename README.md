@@ -12,6 +12,8 @@ Editor de texto para Windows, feito com C# / WPF (.NET 10). Não depende de nenh
 - Painel de navegação com busca e estrutura do documento (gerada a partir dos títulos)
 - Painel do documento: formato (A4, Carta, Ofício), orientação, margens, estatísticas e meta de palavras
 - Modo foco (F11), modo leitura e temas claro, escuro ou automático
+- Backup automático: a cada salvamento, uma cópia com data e hora vai para uma pasta escolhida
+  (por exemplo, dentro do Google Drive para computador, que envia para a nuvem)
 - Verificação ortográfica em pt-BR, localizar e substituir, impressão (inclusive em PDF) e zoom
 
 As preferências ficam em `%APPDATA%\Anotado\config.json`.
@@ -26,6 +28,7 @@ As preferências ficam em `%APPDATA%\Anotado\config.json`.
 | `ThemeManager.cs` | Troca de tema |
 | `AppSettings.cs` | Preferências e tamanhos de página |
 | `Dialogs.cs` | Janelas de link e de atalhos |
+| `BackupService.cs` | Cópias de segurança e limpeza das cópias antigas |
 
 ## Como rodar
 

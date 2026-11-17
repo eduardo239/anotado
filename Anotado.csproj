@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <Resource Include="Assets\Anotado.ico" />
+    <!-- Palavras mais usadas do português, em ordem de frequência: reserva do autocompletar -->
+    <EmbeddedResource Include="Dict\palavras_mais_comuns_do_portugu_s.txt" LogicalName="Anotado.Dict.PalavrasComuns.txt" />
   </ItemGroup>
 
 </Project>

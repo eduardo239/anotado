@@ -76,7 +76,6 @@ public partial class MainWindow : Window
 
     // Autocompletar: sugestão em cinza após o cursor, aceita com Tab.
     private readonly WordCompleter _completer = new();
-    private SuggestionAdorner? _suggestionAdorner;
     private string? _suggestion;
     private bool _suggestionDismissed;
 
@@ -121,15 +120,11 @@ public partial class MainWindow : Window
 
         _initializing = false;
         AutoCompleteToggle.IsChecked = Settings.AutoComplete;
-        Editor.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, _) => _suggestionAdorner?.InvalidateVisual()));
+        Editor.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, _) => ScheduleSuggestionLayout()));
+        Editor.SizeChanged += (_, _) => ScheduleSuggestionLayout();
         Editor.LostKeyboardFocus += (_, _) => HideSuggestion();
 
-        Loaded += (_, _) =>
-        {
-            if (AdornerLayer.GetAdornerLayer(Editor) is { } layer)
-                layer.Add(_suggestionAdorner = new SuggestionAdorner(Editor));
-            Editor.Focus();
-        };
+        Loaded += (_, _) => Editor.Focus();
     }
 
     // ================================================================ Documento
@@ -440,15 +435,51 @@ public partial class MainWindow : Window
         }
 
         _suggestion = suggestion;
-        if (_suggestionAdorner is not null)
-            _suggestionAdorner.Text = suggestion;
+        ScheduleSuggestionLayout();
     }
 
     private void HideSuggestion()
     {
         _suggestion = null;
-        if (_suggestionAdorner is not null)
-            _suggestionAdorner.Text = null;
+        SuggestionText.Visibility = Visibility.Collapsed;
+    }
+
+    // O layout do texto recém-digitado só fica pronto depois desta passada; posiciona em seguida.
+    private void ScheduleSuggestionLayout() =>
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, LayoutSuggestion);
+
+    private void LayoutSuggestion()
+    {
+        if (_suggestion is null)
+        {
+            SuggestionText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var caret = Editor.CaretPosition;
+        var rect = caret.GetCharacterRect(LogicalDirection.Backward);
+        if (rect.IsEmpty)
+        {
+            SuggestionText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // Mesma formatação do trecho em que o cursor está.
+        if (caret.Parent is TextElement element)
+        {
+            SuggestionText.FontFamily = element.FontFamily;
+            SuggestionText.FontSize = element.FontSize;
+            SuggestionText.FontStyle = element.FontStyle;
+            SuggestionText.FontWeight = element.FontWeight;
+        }
+        SuggestionText.Text = _suggestion;
+        SuggestionText.Visibility = Visibility.Visible;
+        SuggestionText.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        // Alinha pela parte de baixo da linha, para coincidir com a linha de base do texto.
+        var origin = Editor.TranslatePoint(new Point(rect.Right, rect.Bottom), SuggestionLayer);
+        Canvas.SetLeft(SuggestionText, origin.X);
+        Canvas.SetTop(SuggestionText, origin.Y - SuggestionText.DesiredSize.Height);
     }
 
     private void AcceptSuggestion()

@@ -368,6 +368,7 @@
                                     </DockPanel>
                                 </Border>
 
+                                <Grid>
                                 <RichTextBox x:Name="Editor" Background="Transparent" Foreground="#262626" CaretBrush="#262626"
                                              AcceptsTab="True" BorderThickness="0" Padding="0"
                                              SpellCheck.IsEnabled="True" Language="pt-BR"
@@ -390,6 +391,11 @@
                                         <ContextMenu />
                                     </RichTextBox.ContextMenu>
                                 </RichTextBox>
+                                <!-- Autocompletar: restante sugerido da palavra, desenhado sobre o editor -->
+                                <Canvas x:Name="SuggestionLayer" IsHitTestVisible="False" ClipToBounds="True">
+                                    <TextBlock x:Name="SuggestionText" Foreground="{DynamicResource PaperMutedBrush}" Visibility="Collapsed" />
+                                </Canvas>
+                                </Grid>
                             </DockPanel>
                             </Border>
                         </Grid>

@@ -1,0 +1,8 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Página (papel) escura: sobrepõe as cores de papel do tema do app -->
+    <SolidColorBrush x:Key="PaperBrush" Color="#25282C" />
+    <SolidColorBrush x:Key="PaperLineBrush" Color="#393D43" />
+    <SolidColorBrush x:Key="PaperMutedBrush" Color="#868B88" />
+    <SolidColorBrush x:Key="PaperInkBrush" Color="#E2E3DF" />
+</ResourceDictionary>

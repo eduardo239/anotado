@@ -45,7 +45,7 @@ public partial class MainWindow : Window
 
     private static readonly (string Name, Color Color)[] TextColors =
     [
-        ("Automático (preto)", Colors.Black),
+        ("Automático", Colors.Black), // remove a cor: segue a tinta da página (preto ou claro)
         ("Cinza", Color.FromRgb(0x59, 0x59, 0x59)),
         ("Vermelho", Color.FromRgb(0xC0, 0x00, 0x00)),
         ("Laranja", Color.FromRgb(0xE3, 0x6C, 0x09)),
@@ -94,6 +94,16 @@ public partial class MainWindow : Window
         Editor.AddHandler(CommandManager.ExecutedEvent,
             new ExecutedRoutedEventHandler((_, _) => ScheduleToolbarSync()), handledEventsToo: true);
         Editor.AddHandler(Hyperlink.RequestNavigateEvent, new RequestNavigateEventHandler(Hyperlink_RequestNavigate));
+
+        // Página escura: o que sai do editor (copiar/arrastar) leva a tinta escura padrão,
+        // e o que entra (colar/soltar) tem o preto convertido em cor automática.
+        DataObject.AddCopyingHandler(Editor, Editor_Copying);
+        Editor.AddHandler(CommandManager.ExecutedEvent, new ExecutedRoutedEventHandler((_, e) =>
+        {
+            if (e.Command == ApplicationCommands.Paste) NormalizeInk(Editor.Document);
+        }), handledEventsToo: true);
+        Editor.AddHandler(DragDrop.DropEvent, new DragEventHandler((_, _) =>
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, () => NormalizeInk(Editor.Document))), handledEventsToo: true);
 
         // Estatísticas e estrutura são recalculadas pouco depois de parar de digitar.
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
@@ -184,6 +194,7 @@ public partial class MainWindow : Window
                 range.Load(stream, DataFormats.Rtf);
             }
 
+            NormalizeInk(doc);
             SetDocument(doc, path);
         }
         catch (Exception ex)
@@ -204,7 +215,7 @@ public partial class MainWindow : Window
             else
             {
                 using var stream = File.Create(path);
-                FullRange.Save(stream, DataFormats.Rtf);
+                WithPrintInk(() => FullRange.Save(stream, DataFormats.Rtf));
             }
 
             _filePath = path;
@@ -367,7 +378,7 @@ public partial class MainWindow : Window
         copy.Resources.Add(typeof(Paragraph), Editor.Resources[typeof(Paragraph)]);
         using (var buffer = new MemoryStream())
         {
-            FullRange.Save(buffer, DataFormats.XamlPackage);
+            WithPrintInk(() => FullRange.Save(buffer, DataFormats.XamlPackage));
             buffer.Position = 0;
             new TextRange(copy.ContentStart, copy.ContentEnd).Load(buffer, DataFormats.XamlPackage);
         }
@@ -854,9 +865,10 @@ public partial class MainWindow : Window
                     BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1),
                 },
             };
+            var automatic = property == TextElement.ForegroundProperty && color == Colors.Black;
             item.Click += (_, _) =>
             {
-                Editor.Selection.ApplyPropertyValue(property, new SolidColorBrush(color));
+                Editor.Selection.ApplyPropertyValue(property, automatic ? null : new SolidColorBrush(color));
                 Editor.Focus();
             };
             menu.Items.Add(item);
@@ -1239,11 +1251,84 @@ public partial class MainWindow : Window
     private void ThemeDark_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Dark);
     private void ThemeSystem_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.System);
 
+    private void PageLight_Click(object sender, RoutedEventArgs e) => ThemeManager.ApplyPage(PageTheme.Light);
+    private void PageDark_Click(object sender, RoutedEventArgs e) => ThemeManager.ApplyPage(PageTheme.Dark);
+    private void PageApp_Click(object sender, RoutedEventArgs e) => ThemeManager.ApplyPage(PageTheme.FollowApp);
+
+    // ================================================================ Tinta da página
+
+    /// <summary>Cor do texto "automático" quando ele sai do app: arquivo, impressão, área de transferência.</summary>
+    private static readonly Brush PrintInk = Frozen(Color.FromRgb(0x26, 0x26, 0x26));
+
+    /// <summary>
+    /// O WPF grava no RTF a cor herdada do editor. Com a página escura ela seria clara,
+    /// então durante a gravação o editor volta temporariamente à tinta escura.
+    /// </summary>
+    private void WithPrintInk(Action action)
+    {
+        if (!ThemeManager.IsPaperDark)
+        {
+            action();
+            return;
+        }
+
+        Editor.Foreground = PrintInk;
+        try { action(); }
+        finally { Editor.SetResourceReference(ForegroundProperty, "PaperInkBrush"); }
+    }
+
+    private void Editor_Copying(object sender, DataObjectCopyingEventArgs e)
+    {
+        if (!ThemeManager.IsPaperDark) return;
+
+        // Regrava os formatos com formatação usando a tinta escura.
+        var range = new TextRange(Editor.Selection.Start, Editor.Selection.End);
+        WithPrintInk(() =>
+        {
+            foreach (var format in new[] { DataFormats.Rtf, DataFormats.Xaml, DataFormats.XamlPackage })
+            {
+                if (!e.DataObject.GetDataPresent(format) || !range.CanSave(format)) continue;
+                var buffer = new MemoryStream();
+                range.Save(buffer, format);
+                e.DataObject.SetData(format, format == DataFormats.XamlPackage
+                    ? buffer
+                    : Encoding.UTF8.GetString(buffer.ToArray()));
+            }
+        });
+    }
+
+    /// <summary>
+    /// Remove cores pretas/quase pretas explícitas (o RTF grava a cor herdada em todo o texto),
+    /// para que o texto siga a tinta da página e continue legível na página escura.
+    /// </summary>
+    private static void NormalizeInk(DependencyObject node)
+    {
+        if (node is FlowDocument or TextElement
+            && node.ReadLocalValue(TextElement.ForegroundProperty) is SolidColorBrush { Color: var c }
+            && IsAutomaticInk(c))
+        {
+            node.ClearValue(TextElement.ForegroundProperty);
+        }
+
+        foreach (var child in LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>())
+            NormalizeInk(child);
+    }
+
+    private static bool IsAutomaticInk(Color c)
+    {
+        var max = Math.Max(c.R, Math.Max(c.G, c.B));
+        var min = Math.Min(c.R, Math.Min(c.G, c.B));
+        return c.A == 255 && max <= 0x30 && max - min <= 8; // preto ou cinza bem escuro, neutro
+    }
+
     private void UpdateThemeButtons()
     {
         ThemeLightButton.IsChecked = ThemeManager.Current == AppTheme.Light;
         ThemeDarkButton.IsChecked = ThemeManager.Current == AppTheme.Dark;
         ThemeSystemButton.IsChecked = ThemeManager.Current == AppTheme.System;
+        PageLightButton.IsChecked = ThemeManager.CurrentPage == PageTheme.Light;
+        PageDarkButton.IsChecked = ThemeManager.CurrentPage == PageTheme.Dark;
+        PageAppButton.IsChecked = ThemeManager.CurrentPage == PageTheme.FollowApp;
     }
 
     private void SpellToggle_Click(object sender, RoutedEventArgs e) =>

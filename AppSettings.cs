@@ -12,6 +12,7 @@ public sealed class AppSettings
     public static AppSettings Current { get; } = Load();
 
     public AppTheme Theme { get; set; } = AppTheme.System;
+    public PageTheme PageTheme { get; set; } = PageTheme.Light;
     public int WordGoal { get; set; } = 500;
     public PageFormat PageFormat { get; set; } = PageFormat.A4;
     public bool Landscape { get; set; }

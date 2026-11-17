@@ -1,6 +1,7 @@
 ﻿<Window x:Class="Anotado.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Anotado"
         Title="Anotado" Icon="/Anotado;component/Assets/Anotado.ico" Height="900" Width="1440" MinWidth="900" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         FontFamily="{StaticResource UiFont}" FontSize="13"
@@ -230,10 +231,15 @@
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE740;" Margin="0,0,8,0" /><TextBlock Text="Modo foco" /></StackPanel>
                         </Button>
                         <Border Style="{StaticResource VDivider}" />
-                        <TextBlock Text="Tema" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="4,0,8,0" />
+                        <TextBlock Text="Tema do app" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="4,0,8,0" />
                         <ToggleButton x:Name="ThemeLightButton" Style="{StaticResource IconToggle}" Click="ThemeLight_Click" Padding="10,6" Content="Claro" />
                         <ToggleButton x:Name="ThemeDarkButton" Style="{StaticResource IconToggle}" Click="ThemeDark_Click" Padding="10,6" Content="Escuro" />
                         <ToggleButton x:Name="ThemeSystemButton" Style="{StaticResource IconToggle}" Click="ThemeSystem_Click" Padding="10,6" Content="Seguir o Windows" />
+                        <Border Style="{StaticResource VDivider}" />
+                        <TextBlock Text="Página" Style="{StaticResource Muted}" VerticalAlignment="Center" Margin="4,0,8,0" />
+                        <ToggleButton x:Name="PageLightButton" Style="{StaticResource IconToggle}" Click="PageLight_Click" Padding="10,6" Content="Clara" />
+                        <ToggleButton x:Name="PageDarkButton" Style="{StaticResource IconToggle}" Click="PageDark_Click" Padding="10,6" Content="Escura" />
+                        <ToggleButton x:Name="PageAppButton" Style="{StaticResource IconToggle}" Click="PageApp_Click" Padding="10,6" Content="Igual ao app" />
                         <Border Style="{StaticResource VDivider}" />
                         <Button Style="{StaticResource IconButton}" Click="ZoomOut_Click" ToolTip="Reduzir"><TextBlock Style="{StaticResource Icon}" Text="&#xE71F;" /></Button>
                         <Button Style="{StaticResource IconButton}" Click="ZoomReset_Click" Content="100%" Padding="10,6" />
@@ -369,7 +375,7 @@
                                 </Border>
 
                                 <Grid>
-                                <RichTextBox x:Name="Editor" Background="Transparent" Foreground="#262626" CaretBrush="#262626"
+                                <RichTextBox x:Name="Editor" Background="Transparent" Foreground="{DynamicResource PaperInkBrush}" CaretBrush="{DynamicResource PaperInkBrush}"
                                              AcceptsTab="True" BorderThickness="0" Padding="0"
                                              SpellCheck.IsEnabled="True" Language="pt-BR"
                                              IsInactiveSelectionHighlightEnabled="True" IsDocumentEnabled="True"
@@ -383,8 +389,30 @@
                                         </ControlTemplate>
                                     </RichTextBox.Template>
                                     <RichTextBox.Resources>
+                                        <!-- Trechos com fundo (realce, citação) ficam claros mesmo na página escura,
+                                             então o texto neles usa sempre tinta escura. -->
+                                        <local:NotNullConverter x:Key="NotNull" />
                                         <Style TargetType="Paragraph">
                                             <Setter Property="Margin" Value="0,0,0,10" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Background, RelativeSource={RelativeSource Self}, Converter={StaticResource NotNull}}" Value="True">
+                                                    <Setter Property="Foreground" Value="#262626" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                        <Style TargetType="Span">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Background, RelativeSource={RelativeSource Self}, Converter={StaticResource NotNull}}" Value="True">
+                                                    <Setter Property="Foreground" Value="#262626" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                        <Style TargetType="Run">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Background, RelativeSource={RelativeSource Self}, Converter={StaticResource NotNull}}" Value="True">
+                                                    <Setter Property="Foreground" Value="#262626" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
                                         </Style>
                                     </RichTextBox.Resources>
                                     <RichTextBox.ContextMenu>

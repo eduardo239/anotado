@@ -80,6 +80,7 @@ public sealed class ShortcutsWindow : ThemedDialog
         ("Ctrl+L  ·  E  ·  R  ·  J", "Alinhar à esquerda, centro, direita, justificar"),
         ("Ctrl+]  ·  Ctrl+[", "Aumentar  ·  diminuir a fonte"),
         ("Ctrl+K", "Inserir link"),
+        ("Tab  ·  Esc", "Aceitar  ·  dispensar sugestão de palavra"),
         ("Ctrl+clique", "Abrir um link"),
         ("Ctrl+F  ·  Ctrl+H", "Localizar  ·  Substituir"),
         ("Ctrl + roda do mouse", "Zoom"),

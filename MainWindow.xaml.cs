@@ -74,6 +74,12 @@ public partial class MainWindow : Window
     private bool _focusMode;
     private List<OutlineEntry> _outline = [];
 
+    // Autocompletar: sugestão em cinza após o cursor, aceita com Tab.
+    private readonly WordCompleter _completer = new();
+    private SuggestionAdorner? _suggestionAdorner;
+    private string? _suggestion;
+    private bool _suggestionDismissed;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -114,7 +120,16 @@ public partial class MainWindow : Window
         Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeButtons;
 
         _initializing = false;
-        Loaded += (_, _) => Editor.Focus();
+        AutoCompleteToggle.IsChecked = Settings.AutoComplete;
+        Editor.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, _) => _suggestionAdorner?.InvalidateVisual()));
+        Editor.LostKeyboardFocus += (_, _) => HideSuggestion();
+
+        Loaded += (_, _) =>
+        {
+            if (AdornerLayer.GetAdornerLayer(Editor) is { } layer)
+                layer.Add(_suggestionAdorner = new SuggestionAdorner(Editor));
+            Editor.Focus();
+        };
     }
 
     // ================================================================ Documento
@@ -385,12 +400,72 @@ public partial class MainWindow : Window
         }
         _refreshTimer.Stop();
         _refreshTimer.Start();
+
+        _suggestionDismissed = false;
+        UpdateSuggestion();
     }
 
     private void Editor_SelectionChanged(object sender, RoutedEventArgs e)
     {
         ScheduleToolbarSync();
         HighlightCurrentSection();
+        UpdateSuggestion();
+    }
+
+    // ================================================================ Autocompletar
+
+    /// <summary>Letras imediatamente antes do cursor (a palavra sendo digitada), ou null se não houver.</summary>
+    private string? WordBeforeCaret()
+    {
+        var before = Editor.CaretPosition.GetTextInRun(LogicalDirection.Backward);
+        var start = before.Length;
+        while (start > 0 && WordCompleter.IsWordChar(before[start - 1])) start--;
+        return start == before.Length ? null : before[start..];
+    }
+
+    private void UpdateSuggestion()
+    {
+        string? suggestion = null;
+        if (Settings.AutoComplete && !_suggestionDismissed && !_loading && !Editor.IsReadOnly
+            && Editor.IsKeyboardFocusWithin && Editor.Selection.IsEmpty)
+        {
+            // Só sugere no fim da palavra (nada de letra logo depois do cursor).
+            var after = Editor.CaretPosition.GetTextInRun(LogicalDirection.Forward);
+            if (after.Length == 0 || !WordCompleter.IsWordChar(after[0]))
+            {
+                var prefix = WordBeforeCaret();
+                if (prefix is not null)
+                    suggestion = _completer.Suggest(prefix);
+            }
+        }
+
+        _suggestion = suggestion;
+        if (_suggestionAdorner is not null)
+            _suggestionAdorner.Text = suggestion;
+    }
+
+    private void HideSuggestion()
+    {
+        _suggestion = null;
+        if (_suggestionAdorner is not null)
+            _suggestionAdorner.Text = null;
+    }
+
+    private void AcceptSuggestion()
+    {
+        var suffix = _suggestion!;
+        HideSuggestion();
+        // Ponteiro com gravidade para frente: acaba depois do texto inserido.
+        var end = Editor.CaretPosition.GetPositionAtOffset(0, LogicalDirection.Forward)!;
+        Editor.Selection.Text = suffix;
+        Editor.CaretPosition = end;
+    }
+
+    private void AutoCompleteToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Settings.AutoComplete = AutoCompleteToggle.IsChecked == true;
+        Settings.Save();
+        UpdateSuggestion();
     }
 
     private void UpdateDocumentInfo()
@@ -420,6 +495,7 @@ public partial class MainWindow : Window
     {
         var text = FullRange.Text;
         var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+        _completer.Rebuild(text, WordBeforeCaret());
         var chars = text.Count(c => c != '\r' && c != '\n');
         var minutes = words == 0 ? 0 : (int)Math.Ceiling(words / 200.0); // ~200 palavras por minuto
 
@@ -1148,6 +1224,15 @@ public partial class MainWindow : Window
     {
         switch (e.Key)
         {
+            case Key.Tab when _suggestion is not null && Keyboard.Modifiers == ModifierKeys.None && Editor.IsKeyboardFocusWithin:
+                AcceptSuggestion();
+                e.Handled = true;
+                break;
+            case Key.Escape when _suggestion is not null && Editor.IsKeyboardFocusWithin:
+                _suggestionDismissed = true;
+                HideSuggestion();
+                e.Handled = true;
+                break;
             case Key.F1:
                 new ShortcutsWindow(this).ShowDialog();
                 e.Handled = true;

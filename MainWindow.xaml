@@ -206,6 +206,10 @@
                         <ToggleButton x:Name="SpellToggle" Style="{StaticResource IconToggle}" IsChecked="True" Click="SpellToggle_Click" Padding="10,6">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="abc" FontWeight="SemiBold" TextDecorations="Underline" Margin="0,0,8,0" /><TextBlock Text="Verificar ortografia" /></StackPanel>
                         </ToggleButton>
+                        <ToggleButton x:Name="AutoCompleteToggle" Style="{StaticResource IconToggle}" Click="AutoCompleteToggle_Click" Padding="10,6"
+                                      ToolTip="Sugere o fim da palavra enquanto você digita. Tab aceita, Esc dispensa.">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="ab|" FontWeight="SemiBold" Margin="0,0,8,0" /><TextBlock Text="Autocompletar" /></StackPanel>
+                        </ToggleButton>
                         <Border Style="{StaticResource VDivider}" />
                         <Button Style="{StaticResource IconButton}" Command="Find" Padding="10,6">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE721;" Margin="0,0,8,0" /><TextBlock Text="Localizar e substituir" /></StackPanel>

@@ -18,6 +18,7 @@ public sealed class AppSettings
     public PageMargins Margins { get; set; } = PageMargins.Normal;
     public bool ShowNavigation { get; set; } = true;
     public bool ShowDocumentPanel { get; set; } = true;
+    public bool AutoComplete { get; set; } = true;
 
     // Backup automático: a cada salvamento, uma cópia com data/hora vai para esta pasta
     // (ex.: uma pasta dentro do Google Drive para computador).

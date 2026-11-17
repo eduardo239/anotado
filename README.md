@@ -29,6 +29,7 @@ As preferências ficam em `%APPDATA%\Anotado\config.json`.
 | `AppSettings.cs` | Preferências e tamanhos de página |
 | `Dialogs.cs` | Janelas de link e de atalhos |
 | `BackupService.cs` | Cópias de segurança e limpeza das cópias antigas |
+| `Assets/Anotado.ico` | Ícone do aplicativo (gerado a partir do SVG em `Assets`) |
 
 ## Como rodar
 

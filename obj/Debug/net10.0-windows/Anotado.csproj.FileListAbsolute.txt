@@ -17,3 +17,15 @@ C:\dev\anotado-main\obj\Debug\net10.0-windows\refint\Anotado.dll
 C:\dev\anotado-main\obj\Debug\net10.0-windows\Anotado.pdb
 C:\dev\anotado-main\obj\Debug\net10.0-windows\Anotado.genruntimeconfig.cache
 C:\dev\anotado-main\obj\Debug\net10.0-windows\ref\Anotado.dll
+C:\dev\anotado-main\obj\Debug\net10.0-windows\Themes\Dark.baml
+C:\dev\anotado-main\obj\Debug\net10.0-windows\Themes\Light.baml
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\build\Anotado.exe
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\build\Anotado.deps.json
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\build\Anotado.runtimeconfig.json
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\build\Anotado.dll
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\build\Anotado.pdb
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.exe
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.deps.json
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.runtimeconfig.json
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.dll
+C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.pdb

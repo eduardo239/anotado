@@ -80,6 +80,12 @@
                 <MenuItem Header="_Ampliar" Click="ZoomIn_Click" InputGestureText="Ctrl+Roda" />
                 <MenuItem Header="_Reduzir" Click="ZoomOut_Click" />
                 <MenuItem Header="_100%" Click="ZoomReset_Click" />
+                <Separator />
+                <MenuItem Header="_Tema">
+                    <MenuItem x:Name="ThemeLightItem" Header="_Claro" IsCheckable="True" Click="ThemeLight_Click" />
+                    <MenuItem x:Name="ThemeDarkItem" Header="_Escuro" IsCheckable="True" Click="ThemeDark_Click" />
+                    <MenuItem x:Name="ThemeSystemItem" Header="_Seguir o Windows" IsCheckable="True" Click="ThemeSystem_Click" />
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="Aj_uda">
                 <MenuItem Header="_Sobre o Anotado" Click="About_Click" />
@@ -87,7 +93,7 @@
         </Menu>
 
         <!-- Barra de ferramentas -->
-        <ToolBarTray DockPanel.Dock="Top">
+        <ToolBarTray x:Name="ToolBars" DockPanel.Dock="Top">
             <ToolBar Band="0">
                 <Button Command="New" ToolTip="Novo (Ctrl+N)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8A5;" /></Button>
                 <Button Command="Open" ToolTip="Abrir (Ctrl+O)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E5;" /></Button>
@@ -115,7 +121,7 @@
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
-                <ComboBox x:Name="FontSizeBox" Width="56" IsEditable="True" ToolTip="Tamanho da fonte"
+                <ComboBox x:Name="FontSizeBox" Width="76" IsEditable="True" ToolTip="Tamanho da fonte"
                           DropDownClosed="FontSizeBox_DropDownClosed" KeyDown="FontSizeBox_KeyDown" />
                 <Button Command="EditingCommands.IncreaseFontSize" ToolTip="Aumentar fonte (Ctrl+])"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E8;" /></Button>
                 <Button Command="EditingCommands.DecreaseFontSize" ToolTip="Diminuir fonte (Ctrl+[)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E7;" /></Button>
@@ -137,7 +143,7 @@
                 </Button>
             </ToolBar>
 
-            <ToolBar Band="0">
+            <ToolBar Band="1">
                 <ToggleButton x:Name="AlignLeftButton" Command="EditingCommands.AlignLeft" ToolTip="Alinhar à esquerda (Ctrl+L)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E4;" /></ToggleButton>
                 <ToggleButton x:Name="AlignCenterButton" Command="EditingCommands.AlignCenter" ToolTip="Centralizar (Ctrl+E)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E3;" /></ToggleButton>
                 <ToggleButton x:Name="AlignRightButton" Command="EditingCommands.AlignRight" ToolTip="Alinhar à direita (Ctrl+R)"><TextBlock Style="{StaticResource Glyph}" Text="&#xE8E2;" /></ToggleButton>
@@ -155,7 +161,8 @@
 
         <!-- Barra de localizar/substituir -->
         <Border x:Name="FindBar" DockPanel.Dock="Top" Visibility="Collapsed"
-                Background="#F3F3F3" BorderBrush="#D0D0D0" BorderThickness="0,0,0,1" Padding="8,6">
+                Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource PanelBorderBrush}"
+                BorderThickness="0,0,0,1" Padding="8,6">
             <WrapPanel VerticalAlignment="Center">
                 <TextBlock Text="Localizar:" VerticalAlignment="Center" Margin="0,0,6,0" />
                 <TextBox x:Name="FindBox" Width="180" VerticalContentAlignment="Center" KeyDown="FindBox_KeyDown" />
@@ -175,7 +182,7 @@
                 <TextBlock x:Name="CountText" Text="0 palavras" />
             </StatusBarItem>
             <StatusBarItem>
-                <TextBlock x:Name="StatusText" Foreground="#A0522D" />
+                <TextBlock x:Name="StatusText" Foreground="{DynamicResource StatusAccentBrush}" />
             </StatusBarItem>
             <StatusBarItem HorizontalAlignment="Right">
                 <StackPanel Orientation="Horizontal">
@@ -188,11 +195,15 @@
         </StatusBar>
 
         <!-- Área da página -->
-        <ScrollViewer Background="#E6E6E8" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+        <Border Background="{DynamicResource PageAreaBrush}">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
                       PreviewMouseWheel="PageArea_PreviewMouseWheel">
+            <!-- A página fica sempre branca com texto preto, nos dois temas (como no Word),
+                 para que o documento salvo/impresso não herde cores do tema escuro. -->
             <Border HorizontalAlignment="Center" Margin="0,16,0,0" Background="White"
-                    BorderBrush="#CFCFD3" BorderThickness="1,1,1,0">
+                    BorderBrush="{DynamicResource PageBorderBrush}" BorderThickness="1,1,1,0">
                 <RichTextBox x:Name="Editor" Width="816"
+                             Background="White" Foreground="Black" CaretBrush="Black"
                              AcceptsTab="True" BorderThickness="0" Padding="0"
                              SpellCheck.IsEnabled="True" Language="pt-BR"
                              IsInactiveSelectionHighlightEnabled="True"
@@ -200,6 +211,14 @@
                              TextChanged="Editor_TextChanged"
                              SelectionChanged="Editor_SelectionChanged"
                              ContextMenuOpening="Editor_ContextMenuOpening">
+                    <!-- Modelo simples: sem a borda/linha de foco do estilo Fluent, para parecer uma folha. -->
+                    <RichTextBox.Template>
+                        <ControlTemplate TargetType="RichTextBox">
+                            <Border Background="{TemplateBinding Background}">
+                                <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" />
+                            </Border>
+                        </ControlTemplate>
+                    </RichTextBox.Template>
                     <RichTextBox.LayoutTransform>
                         <ScaleTransform x:Name="ZoomTransform" ScaleX="1" ScaleY="1" />
                     </RichTextBox.LayoutTransform>
@@ -214,5 +233,6 @@
                 </RichTextBox>
             </Border>
         </ScrollViewer>
+        </Border>
     </DockPanel>
 </Window>

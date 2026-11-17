@@ -56,6 +56,7 @@ public partial class MainWindow : Window
 
         FontFamilyBox.ItemsSource = Fonts.SystemFontFamilies.OrderBy(f => f.Source).ToList();
         FontSizeBox.ItemsSource = FontSizesPt;
+        CompactToolbarButtons();
 
         // Atualiza a barra de ferramentas depois de qualquer comando aplicado ao editor
         // (inclusive atalhos como Ctrl+B, que não mudam a seleção).
@@ -67,6 +68,10 @@ public partial class MainWindow : Window
         var args = Environment.GetCommandLineArgs();
         if (args.Length > 1 && File.Exists(args[1]))
             LoadFile(args[1]);
+
+        UpdateThemeMenu();
+        ThemeManager.ThemeChanged += UpdateThemeMenu;
+        Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeMenu;
 
         Loaded += (_, _) => Editor.Focus();
     }
@@ -83,6 +88,7 @@ public partial class MainWindow : Window
         FontFamily = new FontFamily(DefaultFont),
         FontSize = PtToDip(DefaultFontSizePt),
         PagePadding = new Thickness(72),
+        TextAlignment = TextAlignment.Left, // o padrão do WPF é justificado
         Language = System.Windows.Markup.XmlLanguage.GetLanguage("pt-BR"),
     };
 
@@ -687,6 +693,37 @@ public partial class MainWindow : Window
     private void ZoomIn_Click(object sender, RoutedEventArgs e) => ZoomSlider.Value += 10;
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => ZoomSlider.Value -= 10;
     private void ZoomReset_Click(object sender, RoutedEventArgs e) => ZoomSlider.Value = 100;
+
+    // ---------------------------------------------------------------- Tema
+
+    private void ThemeLight_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Light);
+    private void ThemeDark_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Dark);
+    private void ThemeSystem_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.System);
+
+    /// <summary>
+    /// O tema Fluent usa botões grandes (bons para toque); numa barra de editor isso não cabe.
+    /// Valores locais têm prioridade sobre o estilo do tema, então valem nos dois temas.
+    /// </summary>
+    private void CompactToolbarButtons()
+    {
+        foreach (var toolBar in ToolBars.ToolBars)
+        {
+            foreach (var item in toolBar.Items.OfType<ButtonBase>())
+            {
+                item.Padding = new Thickness(6, 4, 6, 4);
+                item.Margin = new Thickness(1, 0, 1, 0);
+                item.MinWidth = 0;
+                item.MinHeight = 0;
+            }
+        }
+    }
+
+    private void UpdateThemeMenu()
+    {
+        ThemeLightItem.IsChecked = ThemeManager.Current == AppTheme.Light;
+        ThemeDarkItem.IsChecked = ThemeManager.Current == AppTheme.Dark;
+        ThemeSystemItem.IsChecked = ThemeManager.Current == AppTheme.System;
+    }
 
     // ---------------------------------------------------------------- Ajuda
 

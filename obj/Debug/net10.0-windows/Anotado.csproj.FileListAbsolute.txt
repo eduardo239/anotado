@@ -29,3 +29,5 @@ C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1a
 C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.runtimeconfig.json
 C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.dll
 C:\Users\Admin\AppData\Local\Temp\claude\881c931d2d1d8bbe\6898fa8a-6256-4051-b1ac-e9f42966e995\scratchpad\harness\out\Anotado.pdb
+C:\dev\anotado-main\obj\Debug\net10.0-windows\Themes\Styles.baml
+C:\dev\anotado-main\obj\Debug\net10.0-windows\App.baml

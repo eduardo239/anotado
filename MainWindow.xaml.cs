@@ -1,6 +1,8 @@
 ﻿using System.ComponentModel;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Printing;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
@@ -9,20 +11,37 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Navigation;
+using System.Windows.Shapes;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
 namespace Anotado;
 
+/// <summary>Estilos de parágrafo oferecidos na aba Início.</summary>
+public enum ParagraphKind { Normal, Title, Heading1, Heading2, Quote }
+
+/// <summary>Item da estrutura do documento (painel de navegação).</summary>
+public sealed record OutlineEntry(string Number, string Text, int Level, Paragraph Paragraph)
+{
+    public Thickness Indent => new(Level > 1 ? 14 : 0, 0, 0, 0);
+}
+
 public partial class MainWindow : Window
 {
     private const string AppName = "Anotado";
     private const string DefaultFont = "Calibri";
-    private const double DefaultFontSizePt = 11;
+    private const double BodySizePt = 12;
     private const string FileFilter =
         "Documento RTF (*.rtf)|*.rtf|Texto sem formatação (*.txt)|*.txt";
 
     private static readonly double[] FontSizesPt = [8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72];
+    private static readonly string[] Months = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"];
+
+    // Cores fixas usadas *dentro* do documento (não mudam com o tema, pois vão para o arquivo).
+    private static readonly Brush QuoteBackground = Frozen(Color.FromRgb(0xE5, 0xE9, 0xDC));
+    private static readonly Brush QuoteBar = Frozen(Color.FromRgb(0x8C, 0x9C, 0x74));
+    private static readonly Brush TableLine = Frozen(Color.FromRgb(0xBD, 0xBD, 0xB5));
 
     private static readonly (string Name, Color Color)[] TextColors =
     [
@@ -30,38 +49,56 @@ public partial class MainWindow : Window
         ("Cinza", Color.FromRgb(0x59, 0x59, 0x59)),
         ("Vermelho", Color.FromRgb(0xC0, 0x00, 0x00)),
         ("Laranja", Color.FromRgb(0xE3, 0x6C, 0x09)),
-        ("Verde", Color.FromRgb(0x00, 0x80, 0x3C)),
+        ("Verde", Color.FromRgb(0x3B, 0x6E, 0x12)),
         ("Azul", Color.FromRgb(0x1F, 0x4E, 0xA8)),
-        ("Azul-claro", Color.FromRgb(0x00, 0x70, 0xC0)),
         ("Roxo", Color.FromRgb(0x70, 0x30, 0xA0)),
     ];
 
     private static readonly (string Name, Color Color)[] HighlightColors =
     [
+        ("Verde-limão", Color.FromRgb(0xDC, 0xF5, 0xA8)),
         ("Amarelo", Color.FromRgb(0xFF, 0xF1, 0x76)),
-        ("Verde", Color.FromRgb(0xB9, 0xF6, 0xCA)),
         ("Azul", Color.FromRgb(0xB3, 0xE5, 0xFC)),
         ("Rosa", Color.FromRgb(0xF8, 0xBB, 0xD0)),
         ("Cinza", Color.FromRgb(0xE0, 0xE0, 0xE0)),
     ];
 
+    private static AppSettings Settings => AppSettings.Current;
+
+    private readonly DispatcherTimer _refreshTimer;
     private string? _filePath;
     private bool _dirty;
     private bool _loading;
+    private bool _initializing = true;
     private bool _syncingToolbar;
+    private bool _focusMode;
+    private List<OutlineEntry> _outline = [];
 
     public MainWindow()
     {
         InitializeComponent();
 
+        var workArea = SystemParameters.WorkArea;
+        Width = Math.Min(Width, workArea.Width * 0.95);
+        Height = Math.Min(Height, workArea.Height * 0.95);
+
         FontFamilyBox.ItemsSource = Fonts.SystemFontFamilies.OrderBy(f => f.Source).ToList();
         FontSizeBox.ItemsSource = FontSizesPt;
-        CompactToolbarButtons();
 
-        // Atualiza a barra de ferramentas depois de qualquer comando aplicado ao editor
-        // (inclusive atalhos como Ctrl+B, que não mudam a seleção).
+        // Atualiza a barra depois de qualquer comando no editor (inclusive atalhos como Ctrl+B).
         Editor.AddHandler(CommandManager.ExecutedEvent,
             new ExecutedRoutedEventHandler((_, _) => ScheduleToolbarSync()), handledEventsToo: true);
+        Editor.AddHandler(Hyperlink.RequestNavigateEvent, new RequestNavigateEventHandler(Hyperlink_RequestNavigate));
+
+        // Estatísticas e estrutura são recalculadas pouco depois de parar de digitar.
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        _refreshTimer.Tick += (_, _) => { _refreshTimer.Stop(); RefreshStatsAndOutline(); };
+
+        PageFormatBox.SelectedIndex = (int)Settings.PageFormat;
+        OrientationBox.SelectedIndex = Settings.Landscape ? 1 : 0;
+        MarginsBox.SelectedIndex = (int)Settings.Margins;
+        GoalBox.Text = Settings.WordGoal.ToString(CultureInfo.CurrentCulture);
+        ApplyPanelsVisibility();
 
         NewDocument();
 
@@ -69,25 +106,28 @@ public partial class MainWindow : Window
         if (args.Length > 1 && File.Exists(args[1]))
             LoadFile(args[1]);
 
-        UpdateThemeMenu();
-        ThemeManager.ThemeChanged += UpdateThemeMenu;
-        Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeMenu;
+        UpdateThemeButtons();
+        ThemeManager.ThemeChanged += UpdateThemeButtons;
+        Closed += (_, _) => ThemeManager.ThemeChanged -= UpdateThemeButtons;
 
+        _initializing = false;
         Loaded += (_, _) => Editor.Focus();
     }
 
-    // ---------------------------------------------------------------- Documento
+    // ================================================================ Documento
 
     private string DocumentName =>
         _filePath is null ? "Documento sem título" : System.IO.Path.GetFileName(_filePath);
+
+    private string DisplayTitle =>
+        _filePath is null ? "Documento sem título" : System.IO.Path.GetFileNameWithoutExtension(_filePath);
 
     private TextRange FullRange => new(Editor.Document.ContentStart, Editor.Document.ContentEnd);
 
     private static FlowDocument CreateBaseDocument() => new()
     {
         FontFamily = new FontFamily(DefaultFont),
-        FontSize = PtToDip(DefaultFontSizePt),
-        PagePadding = new Thickness(72),
+        FontSize = PtToDip(BodySizePt),
         TextAlignment = TextAlignment.Left, // o padrão do WPF é justificado
         Language = System.Windows.Markup.XmlLanguage.GetLanguage("pt-BR"),
     };
@@ -101,8 +141,9 @@ public partial class MainWindow : Window
 
         _filePath = path;
         _dirty = false;
-        UpdateTitle();
-        UpdateCounts();
+        ApplyPageSetup();
+        UpdateDocumentInfo();
+        RefreshStatsAndOutline();
         ScheduleToolbarSync();
     }
 
@@ -155,7 +196,7 @@ public partial class MainWindow : Window
 
             _filePath = path;
             _dirty = false;
-            UpdateTitle();
+            UpdateDocumentInfo();
             ShowStatus($"Salvo às {DateTime.Now:HH:mm}");
             return true;
         }
@@ -214,10 +255,10 @@ public partial class MainWindow : Window
 
     private bool HasRichContent()
     {
-        // Heurística simples: há algo além de parágrafos com texto puro?
         foreach (var block in Editor.Document.Blocks)
         {
             if (block is not Paragraph p) return true;
+            if (DetectKind(p) != ParagraphKind.Normal) return true;
             foreach (var inline in p.Inlines)
             {
                 if (inline is not Run run) return true;
@@ -239,7 +280,7 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
-    // ---------------------------------------------------------------- Comandos de arquivo
+    // ================================================================ Arquivo
 
     private void New_Executed(object sender, ExecutedRoutedEventArgs e)
     {
@@ -264,16 +305,50 @@ public partial class MainWindow : Window
 
     private void SaveAs_Executed(object sender, ExecutedRoutedEventArgs e) => SaveAs();
 
-    private void Exit_Click(object sender, RoutedEventArgs e) => Close();
+    private void FileTab_Click(object sender, RoutedEventArgs e)
+    {
+        FileTab.IsChecked = true;
+
+        var menu = new ContextMenu { PlacementTarget = FileTab, Placement = PlacementMode.Bottom };
+        void Add(string header, ICommand command, string? gesture = null) =>
+            menu.Items.Add(new MenuItem { Header = header, Command = command, CommandTarget = Editor, InputGestureText = gesture ?? "" });
+
+        Add("Novo", ApplicationCommands.New, "Ctrl+N");
+        Add("Abrir...", ApplicationCommands.Open, "Ctrl+O");
+        Add("Salvar", ApplicationCommands.Save, "Ctrl+S");
+        Add("Salvar como...", ApplicationCommands.SaveAs, "Ctrl+Shift+S");
+        menu.Items.Add(new Separator());
+        Add("Imprimir...", ApplicationCommands.Print, "Ctrl+P");
+        menu.Items.Add(new Separator());
+        var exit = new MenuItem { Header = "Sair" };
+        exit.Click += (_, _) => Close();
+        menu.Items.Add(exit);
+
+        menu.Closed += (_, _) => FileTab.IsChecked = false;
+        menu.IsOpen = true;
+    }
 
     private void Print_Executed(object sender, ExecutedRoutedEventArgs e)
     {
         var dialog = new PrintDialog();
+        try
+        {
+            dialog.PrintTicket.PageOrientation = Settings.Landscape ? PageOrientation.Landscape : PageOrientation.Portrait;
+            dialog.PrintTicket.PageMediaSize = new PageMediaSize(Settings.PageFormat switch
+            {
+                PageFormat.Carta => PageMediaSizeName.NorthAmericaLetter,
+                PageFormat.Oficio => PageMediaSizeName.NorthAmericaLegal,
+                _ => PageMediaSizeName.ISOA4,
+            });
+        }
+        catch (Exception) { /* impressora sem suporte: usa o padrão dela */ }
+
         if (dialog.ShowDialog() != true)
             return;
 
         // Imprime uma cópia para não alterar o layout do documento em edição.
         var copy = CreateBaseDocument();
+        copy.Resources.Add(typeof(Paragraph), Editor.Resources[typeof(Paragraph)]);
         using (var buffer = new MemoryStream())
         {
             FullRange.Save(buffer, DataFormats.XamlPackage);
@@ -283,14 +358,14 @@ public partial class MainWindow : Window
 
         copy.PageWidth = dialog.PrintableAreaWidth;
         copy.PageHeight = dialog.PrintableAreaHeight;
-        copy.PagePadding = new Thickness(72);
+        copy.PagePadding = new Thickness(PageSetup.Margin(Settings.Margins));
         copy.ColumnGap = 0;
         copy.ColumnWidth = dialog.PrintableAreaWidth;
 
         dialog.PrintDocument(((IDocumentPaginatorSource)copy).DocumentPaginator, DocumentName);
     }
 
-    // ---------------------------------------------------------------- Estado do editor
+    // ================================================================ Estado e informações
 
     private void Editor_TextChanged(object sender, TextChangedEventArgs e)
     {
@@ -300,22 +375,87 @@ public partial class MainWindow : Window
         if (!_dirty)
         {
             _dirty = true;
-            UpdateTitle();
+            UpdateDocumentInfo();
         }
-        UpdateCounts();
+        _refreshTimer.Stop();
+        _refreshTimer.Start();
     }
 
-    private void Editor_SelectionChanged(object sender, RoutedEventArgs e) => ScheduleToolbarSync();
+    private void Editor_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        ScheduleToolbarSync();
+        HighlightCurrentSection();
+    }
 
-    private void UpdateTitle() =>
+    private void UpdateDocumentInfo()
+    {
         Title = $"{(_dirty ? "• " : "")}{DocumentName} - {AppName}";
+        DocTitleText.Text = DisplayTitle;
 
-    private void UpdateCounts()
+        var folder = _filePath is null ? null : new DirectoryInfo(System.IO.Path.GetDirectoryName(_filePath)!);
+        DocPathText.Text = folder is null
+            ? "Ainda não salvo"
+            : folder.Parent is { } parent ? $"{parent.Name.TrimEnd('\\')} / {folder.Name}" : folder.Name.TrimEnd('\\');
+
+        var savedText = _dirty ? "Alterações não salvas" : _filePath is null ? "Novo documento" : "Salvo";
+        var dotKey = _dirty ? "WarningBrush" : "AccentBrush";
+        SavedText.Text = StatusSavedText.Text = savedText;
+        SavedDot.SetResourceReference(Shape.FillProperty, dotKey);
+        StatusDot.SetResourceReference(Shape.FillProperty, dotKey);
+
+        var culture = CultureInfo.GetCultureInfo("pt-BR");
+        HeaderPathText.Text = $"ANOTADO / {(folder?.Name.TrimEnd('\\') ?? "Rascunho").ToUpper(culture)}";
+        var today = DateTime.Today;
+        HeaderDateText.Text = $"{today.Day:00} {Months[today.Month - 1]} {today.Year}";
+        FooterNameText.Text = DisplayTitle.ToUpper(culture);
+    }
+
+    private void RefreshStatsAndOutline()
     {
         var text = FullRange.Text;
         var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
         var chars = text.Count(c => c != '\r' && c != '\n');
-        CountText.Text = $"{words:N0} {(words == 1 ? "palavra" : "palavras")}  ·  {chars:N0} caracteres";
+        var minutes = words == 0 ? 0 : (int)Math.Ceiling(words / 200.0); // ~200 palavras por minuto
+
+        StatWords.Text = words.ToString("N0");
+        StatChars.Text = chars.ToString("N0");
+        StatReading.Text = $"{minutes} min";
+        StatusWordsText.Text = $"{words:N0} {(words == 1 ? "palavra" : "palavras")}";
+        FooterWordsText.Text = $"{words:N0} PALAVRAS";
+        GoalCurrentText.Text = words.ToString("N0");
+        UpdateGoalBar(words);
+
+        BuildOutline();
+    }
+
+    private int CurrentWordCount =>
+        FullRange.Text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
+
+    private void UpdateGoalBar(int words)
+    {
+        var ratio = Settings.WordGoal <= 0 ? 0 : Math.Min(1.0, (double)words / Settings.WordGoal);
+        GoalFill.Width = GoalTrack.ActualWidth * ratio;
+        GoalCaption.Text = ratio >= 1 ? "Meta atingida. Bom trabalho!" : "Uma ideia de cada vez.";
+    }
+
+    private void GoalTrack_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateGoalBar(CurrentWordCount);
+
+    private void GoalBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        Editor.Focus(); // dispara o LostFocus, que aplica a meta
+        e.Handled = true;
+    }
+
+    private void GoalBox_Commit(object sender, RoutedEventArgs e)
+    {
+        if (int.TryParse(GoalBox.Text.Trim().Replace(".", ""), NumberStyles.Integer, CultureInfo.CurrentCulture, out var goal) && goal > 0)
+        {
+            Settings.WordGoal = Math.Min(goal, 1_000_000);
+            Settings.Save();
+        }
+        GoalBox.Text = Settings.WordGoal.ToString(CultureInfo.CurrentCulture);
+        UpdateGoalBar(CurrentWordCount);
     }
 
     private void ShowStatus(string message)
@@ -328,6 +468,27 @@ public partial class MainWindow : Window
             if (StatusText.Text == message) StatusText.Text = "";
         };
         timer.Start();
+    }
+
+    // ================================================================ Barra de formatação
+
+    private void Tab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (RibbonPanels is null || sender is not FrameworkElement { Tag: string panelName })
+            return; // ainda carregando a janela
+
+        foreach (FrameworkElement panel in RibbonPanels.Children)
+            panel.Visibility = panel.Name == panelName ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void ModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Editor is null) return; // ainda carregando a janela
+
+        var readOnly = ModeBox.SelectedIndex == 1;
+        Editor.IsReadOnly = readOnly;
+        HomePanel.IsEnabled = InsertPanel.IsEnabled = LayoutPanel.IsEnabled = !readOnly;
+        ShowStatus(readOnly ? "Modo leitura: o texto está protegido contra alterações." : "Modo edição.");
     }
 
     private void ScheduleToolbarSync() =>
@@ -360,11 +521,151 @@ public partial class MainWindow : Window
                 FontSizeBox.Text = sel.GetPropertyValue(TextElement.FontSizeProperty) is double size
                     ? Math.Round(DipToPt(size), 1).ToString(CultureInfo.CurrentCulture)
                     : "";
+
+            var paragraph = sel.Start.Paragraph;
+            StyleBox.SelectedIndex = paragraph is null ? -1 : (int)DetectKind(paragraph);
         }
         finally
         {
             _syncingToolbar = false;
         }
+    }
+
+    // ---------------------------------------------------------------- Estilos de parágrafo
+
+    private void StyleBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingToolbar || Editor is null || StyleBox.SelectedIndex < 0)
+            return;
+        ApplyParagraphKind((ParagraphKind)StyleBox.SelectedIndex);
+        Editor.Focus();
+    }
+
+    private void ApplyParagraphKind(ParagraphKind kind)
+    {
+        var (sizePt, weight, margin) = kind switch
+        {
+            ParagraphKind.Title => (26.0, FontWeights.Bold, new Thickness(0, 4, 0, 8)),
+            ParagraphKind.Heading1 => (17.0, FontWeights.SemiBold, new Thickness(0, 22, 0, 10)),
+            ParagraphKind.Heading2 => (13.5, FontWeights.SemiBold, new Thickness(0, 14, 0, 6)),
+            ParagraphKind.Quote => (BodySizePt, FontWeights.Normal, new Thickness(0, 8, 0, 14)),
+            _ => (BodySizePt, FontWeights.Normal, new Thickness(0, 0, 0, 10)),
+        };
+
+        Editor.BeginChange();
+        try
+        {
+            foreach (var p in SelectedParagraphs().ToList())
+            {
+                var content = new TextRange(p.ContentStart, p.ContentEnd);
+                content.ApplyPropertyValue(TextElement.FontSizeProperty, PtToDip(sizePt));
+                content.ApplyPropertyValue(TextElement.FontWeightProperty, weight);
+                p.FontSize = PtToDip(sizePt); // vale também para o texto digitado depois
+                p.FontWeight = weight;
+                p.Margin = margin;
+
+                if (kind == ParagraphKind.Quote)
+                {
+                    p.Background = QuoteBackground;
+                    p.BorderBrush = QuoteBar;
+                    p.BorderThickness = new Thickness(3, 0, 0, 0);
+                    p.Padding = new Thickness(18, 12, 18, 12);
+                }
+                else
+                {
+                    p.ClearValue(Block.BackgroundProperty);
+                    p.ClearValue(Block.BorderBrushProperty);
+                    p.ClearValue(Block.BorderThicknessProperty);
+                    p.ClearValue(Block.PaddingProperty);
+                }
+            }
+        }
+        finally
+        {
+            Editor.EndChange();
+        }
+
+        RefreshStatsAndOutline();
+        ScheduleToolbarSync();
+    }
+
+    /// <summary>
+    /// Descobre o estilo de um parágrafo pela formatação (assim funciona também em arquivos
+    /// reabertos, já que o RTF não guarda o nome do estilo).
+    /// </summary>
+    private static ParagraphKind DetectKind(Paragraph p)
+    {
+        if (p.BorderThickness.Left >= 2 && p.Background is not null)
+            return ParagraphKind.Quote;
+
+        var content = new TextRange(p.ContentStart, p.ContentEnd);
+        var sizeValue = content.IsEmpty ? p.FontSize : content.GetPropertyValue(TextElement.FontSizeProperty);
+        var weightValue = content.IsEmpty ? p.FontWeight : content.GetPropertyValue(TextElement.FontWeightProperty);
+        if (sizeValue is not double sizeDip)
+            return ParagraphKind.Normal;
+
+        var size = DipToPt(sizeDip);
+        var bold = weightValue is FontWeight w && w.ToOpenTypeWeight() >= FontWeights.SemiBold.ToOpenTypeWeight();
+
+        if (size >= 22) return ParagraphKind.Title;
+        if (size >= 15 && bold) return ParagraphKind.Heading1;
+        if (size >= 13 && bold) return ParagraphKind.Heading2;
+        return ParagraphKind.Normal;
+    }
+
+    private IEnumerable<Paragraph> SelectedParagraphs()
+    {
+        var sel = Editor.Selection;
+        return EnumerateParagraphs(Editor.Document.Blocks)
+            .Where(p => p.ContentEnd.CompareTo(sel.Start) >= 0 && p.ContentStart.CompareTo(sel.End) <= 0);
+    }
+
+    private static IEnumerable<Paragraph> EnumerateParagraphs(IEnumerable<Block> blocks)
+    {
+        foreach (var block in blocks)
+        {
+            switch (block)
+            {
+                case Paragraph p:
+                    yield return p;
+                    break;
+                case List list:
+                    foreach (var item in list.ListItems)
+                        foreach (var p in EnumerateParagraphs(item.Blocks)) yield return p;
+                    break;
+                case Section section:
+                    foreach (var p in EnumerateParagraphs(section.Blocks)) yield return p;
+                    break;
+                case Table table:
+                    foreach (var group in table.RowGroups)
+                        foreach (var row in group.Rows)
+                            foreach (var cell in row.Cells)
+                                foreach (var p in EnumerateParagraphs(cell.Blocks)) yield return p;
+                    break;
+            }
+        }
+    }
+
+    private void LineSpacingBox_DropDownClosed(object? sender, EventArgs e)
+    {
+        if (LineSpacingBox.SelectedItem is not ComboBoxItem { Tag: string tag })
+            return;
+        var factor = double.Parse(tag, CultureInfo.InvariantCulture);
+
+        Editor.BeginChange();
+        foreach (var p in SelectedParagraphs().ToList())
+        {
+            if (factor <= 1.0)
+            {
+                p.ClearValue(Block.LineHeightProperty);
+                continue;
+            }
+            var size = new TextRange(p.ContentStart, p.ContentEnd).GetPropertyValue(TextElement.FontSizeProperty) as double?
+                       ?? p.FontSize;
+            p.LineHeight = size * 1.25 * factor;
+        }
+        Editor.EndChange();
+        Editor.Focus();
     }
 
     // ---------------------------------------------------------------- Fonte
@@ -435,7 +736,7 @@ public partial class MainWindow : Window
                 Header = name,
                 Icon = new Border
                 {
-                    Width = 16, Height = 16,
+                    Width = 16, Height = 16, CornerRadius = new CornerRadius(3),
                     Background = new SolidColorBrush(color),
                     BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1),
                 },
@@ -463,7 +764,7 @@ public partial class MainWindow : Window
         menu.IsOpen = true;
     }
 
-    // ---------------------------------------------------------------- Inserir
+    // ================================================================ Inserir
 
     private void InsertImage_Click(object sender, RoutedEventArgs e)
     {
@@ -482,7 +783,7 @@ public partial class MainWindow : Window
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.EndInit();
 
-            var maxWidth = Editor.Width - 2 * 72 - 8;
+            var maxWidth = Page.Width - 2 * PageSetup.Margin(Settings.Margins) - 8;
             var image = new Image
             {
                 Source = bitmap,
@@ -491,8 +792,7 @@ public partial class MainWindow : Window
             };
 
             Editor.Selection.Text = "";
-            var position = Editor.CaretPosition.GetInsertionPosition(LogicalDirection.Forward);
-            _ = new InlineUIContainer(image, position);
+            _ = new InlineUIContainer(image, Editor.CaretPosition.GetInsertionPosition(LogicalDirection.Forward));
             Editor.Focus();
         }
         catch (Exception ex)
@@ -502,6 +802,93 @@ public partial class MainWindow : Window
         }
     }
 
+    private void InsertTable_Click(object sender, RoutedEventArgs e)
+    {
+        const int rows = 3, columns = 3;
+
+        var table = new Table { CellSpacing = 0, Margin = new Thickness(0, 4, 0, 12) };
+        for (var c = 0; c < columns; c++)
+            table.Columns.Add(new TableColumn());
+
+        var group = new TableRowGroup();
+        for (var r = 0; r < rows; r++)
+        {
+            var row = new TableRow();
+            for (var c = 0; c < columns; c++)
+            {
+                row.Cells.Add(new TableCell(new Paragraph { Margin = new Thickness(0) })
+                {
+                    BorderBrush = TableLine,
+                    BorderThickness = new Thickness(0.75),
+                    Padding = new Thickness(8, 5, 8, 5),
+                });
+            }
+            group.Rows.Add(row);
+        }
+        table.RowGroups.Add(group);
+
+        var current = Editor.CaretPosition.Paragraph;
+        if (current?.SiblingBlocks is { } siblings)
+            siblings.InsertAfter(current, table);
+        else
+            Editor.Document.Blocks.Add(table);
+
+        if (table.NextBlock is null)
+            table.SiblingBlocks!.Add(new Paragraph());
+
+        Editor.CaretPosition = group.Rows[0].Cells[0].ContentStart.GetInsertionPosition(LogicalDirection.Forward);
+        Editor.Focus();
+    }
+
+    private void InsertLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (Editor.IsReadOnly) return;
+
+        var address = InputDialog.Ask(this, "Inserir link", "Endereço do link:", "https://");
+        if (string.IsNullOrWhiteSpace(address) || address == "https://")
+            return;
+        if (!address.Contains("://") && !address.StartsWith("mailto:", StringComparison.OrdinalIgnoreCase))
+            address = "https://" + address;
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri))
+        {
+            ShowStatus("Endereço inválido.");
+            return;
+        }
+
+        try
+        {
+            Editor.BeginChange();
+            TextPointer start, end;
+            if (Editor.Selection.IsEmpty)
+            {
+                var run = new Run(address, Editor.CaretPosition.GetInsertionPosition(LogicalDirection.Forward));
+                (start, end) = (run.ContentStart, run.ContentEnd);
+            }
+            else
+            {
+                (start, end) = (Editor.Selection.Start, Editor.Selection.End);
+            }
+            _ = new Hyperlink(start, end) { NavigateUri = uri, ToolTip = $"{uri}\nCtrl+clique para abrir" };
+            Editor.CaretPosition = end.GetInsertionPosition(LogicalDirection.Forward);
+        }
+        catch (InvalidOperationException)
+        {
+            ShowStatus("Selecione um trecho dentro de um único parágrafo para criar o link.");
+        }
+        finally
+        {
+            Editor.EndChange();
+        }
+        Editor.Focus();
+    }
+
+    private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)
+    {
+        if (e.Uri.Scheme is "http" or "https" or "mailto")
+            Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        e.Handled = true;
+    }
+
     private void InsertDate_Click(object sender, RoutedEventArgs e)
     {
         Editor.Selection.Text = DateTime.Now.ToString("g", CultureInfo.CurrentCulture);
@@ -509,10 +896,189 @@ public partial class MainWindow : Window
         Editor.Focus();
     }
 
-    // ---------------------------------------------------------------- Localizar e substituir
+    // ================================================================ Página
+
+    private void PageSetup_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing) return;
+
+        Settings.PageFormat = (PageFormat)Math.Max(0, PageFormatBox.SelectedIndex);
+        Settings.Landscape = OrientationBox.SelectedIndex == 1;
+        Settings.Margins = (PageMargins)Math.Max(0, MarginsBox.SelectedIndex);
+        Settings.Save();
+        ApplyPageSetup();
+    }
+
+    private void ApplyPageSetup()
+    {
+        var (width, _) = PageSetup.Size(Settings.PageFormat, Settings.Landscape);
+        var margin = PageSetup.Margin(Settings.Margins);
+
+        Page.Width = width;
+        // O RichTextBox ignora o PagePadding do documento; a margem vai no próprio editor.
+        Editor.Document.PagePadding = new Thickness(0);
+        Editor.Padding = new Thickness(margin, 22, margin, 24);
+        PageHeader.Margin = new Thickness(margin, 40, margin, 0);
+        PageFooter.Margin = new Thickness(margin, 0, margin, 16);
+    }
+
+    private void ShowPageSetup_Click(object sender, RoutedEventArgs e)
+    {
+        Settings.ShowDocumentPanel = true;
+        Settings.Save();
+        if (_focusMode) SetFocusMode(false);
+        ApplyPanelsVisibility();
+        PageFormatBox.Focus();
+    }
+
+    // ================================================================ Painéis, foco e tema
+
+    private void NavToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Settings.ShowNavigation = !Settings.ShowNavigation;
+        Settings.Save();
+        ApplyPanelsVisibility();
+    }
+
+    private void DocPanelToggle_Click(object sender, RoutedEventArgs e)
+    {
+        Settings.ShowDocumentPanel = !Settings.ShowDocumentPanel;
+        Settings.Save();
+        ApplyPanelsVisibility();
+    }
+
+    private void ApplyPanelsVisibility()
+    {
+        NavPanel.Visibility = Settings.ShowNavigation && !_focusMode ? Visibility.Visible : Visibility.Collapsed;
+        DocPanel.Visibility = Settings.ShowDocumentPanel && !_focusMode ? Visibility.Visible : Visibility.Collapsed;
+        NavToggle.IsChecked = Settings.ShowNavigation;
+        DocPanelToggle.IsChecked = Settings.ShowDocumentPanel;
+    }
+
+    private void FocusMode_Click(object sender, RoutedEventArgs e) => SetFocusMode(!_focusMode);
+
+    private void SetFocusMode(bool on)
+    {
+        _focusMode = on;
+        TabsBar.Visibility = RibbonBar.Visibility = on ? Visibility.Collapsed : Visibility.Visible;
+        FocusLabel.Text = on ? "Sair do foco" : "Modo foco";
+        FocusIcon.Text = on ? "" : "";
+        ApplyPanelsVisibility();
+        if (on) ShowStatus("Modo foco: Esc ou F11 para sair.");
+        Editor.Focus();
+    }
+
+    private void ThemeLight_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Light);
+    private void ThemeDark_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Dark);
+    private void ThemeSystem_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.System);
+
+    private void UpdateThemeButtons()
+    {
+        ThemeLightButton.IsChecked = ThemeManager.Current == AppTheme.Light;
+        ThemeDarkButton.IsChecked = ThemeManager.Current == AppTheme.Dark;
+        ThemeSystemButton.IsChecked = ThemeManager.Current == AppTheme.System;
+    }
+
+    private void SpellToggle_Click(object sender, RoutedEventArgs e) =>
+        SpellCheck.SetIsEnabled(Editor, SpellToggle.IsChecked == true);
+
+    private void Shortcuts_Click(object sender, RoutedEventArgs e) => new ShortcutsWindow(this).ShowDialog();
+
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case Key.F1:
+                new ShortcutsWindow(this).ShowDialog();
+                e.Handled = true;
+                break;
+            case Key.F11:
+                SetFocusMode(!_focusMode);
+                e.Handled = true;
+                break;
+            case Key.Escape when _focusMode && !FindBox.IsKeyboardFocusWithin && !ReplaceBox.IsKeyboardFocusWithin:
+                SetFocusMode(false);
+                e.Handled = true;
+                break;
+            case Key.K when Keyboard.Modifiers == ModifierKeys.Control:
+                InsertLink_Click(this, e);
+                e.Handled = true;
+                break;
+        }
+    }
+
+    // ================================================================ Navegação (estrutura e busca)
+
+    private void BuildOutline()
+    {
+        var entries = new List<OutlineEntry>();
+        foreach (var p in EnumerateParagraphs(Editor.Document.Blocks))
+        {
+            var kind = DetectKind(p);
+            if (kind is not (ParagraphKind.Title or ParagraphKind.Heading1 or ParagraphKind.Heading2))
+                continue;
+
+            var text = new TextRange(p.ContentStart, p.ContentEnd).Text.Trim();
+            if (text.Length == 0)
+                continue;
+
+            var level = kind == ParagraphKind.Heading2 ? 2 : 1;
+            entries.Add(new OutlineEntry((entries.Count + 1).ToString("00"), text, level, p));
+        }
+
+        // Evita recriar a lista (e perder a seleção) quando nada mudou.
+        if (!entries.Select(x => (x.Text, x.Level, x.Paragraph)).SequenceEqual(_outline.Select(x => (x.Text, x.Level, x.Paragraph))))
+        {
+            _outline = entries;
+            OutlineList.ItemsSource = entries;
+        }
+
+        OutlineEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        SectionCountText.Text = $"{entries.Count} {(entries.Count == 1 ? "seção" : "seções")}";
+        HighlightCurrentSection();
+    }
+
+    private void HighlightCurrentSection()
+    {
+        var caret = Editor.Selection.Start;
+        OutlineList.SelectedItem = _outline.LastOrDefault(x => x.Paragraph.ContentStart.CompareTo(caret) <= 0)
+                                   ?? _outline.FirstOrDefault();
+    }
+
+    private void OutlineList_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (ItemsControl.ContainerFromElement(OutlineList, (DependencyObject)e.OriginalSource) is not ListBoxItem { DataContext: OutlineEntry entry })
+            return;
+
+        Editor.Focus();
+        Editor.CaretPosition = entry.Paragraph.ContentStart;
+        ScrollToTop(entry.Paragraph.ContentStart);
+        e.Handled = true;
+    }
+
+    private void NavSearchBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        SearchPlaceholder.Visibility = NavSearchBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private void NavSearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            FindNext(NavSearchBox.Text);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            NavSearchBox.Clear();
+            Editor.Focus();
+            e.Handled = true;
+        }
+    }
+
+    // ================================================================ Localizar e substituir
 
     private void Find_Executed(object sender, ExecutedRoutedEventArgs e)
     {
+        if (_focusMode) SetFocusMode(false);
         FindBar.Visibility = Visibility.Visible;
         if (!Editor.Selection.IsEmpty && !Editor.Selection.Text.Contains('\n'))
             FindBox.Text = Editor.Selection.Text;
@@ -524,7 +1090,7 @@ public partial class MainWindow : Window
     {
         if (e.Key == Key.Enter)
         {
-            if (sender == ReplaceBox) ReplaceCurrent(); else FindNext();
+            if (sender == ReplaceBox) ReplaceCurrent(); else FindNext(FindBox.Text);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
@@ -534,7 +1100,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void FindNext_Click(object sender, RoutedEventArgs e) => FindNext();
+    private void FindNext_Click(object sender, RoutedEventArgs e) => FindNext(FindBox.Text);
     private void Replace_Click(object sender, RoutedEventArgs e) => ReplaceCurrent();
     private void CloseFind_Click(object sender, RoutedEventArgs e) => CloseFindBar();
 
@@ -547,9 +1113,8 @@ public partial class MainWindow : Window
     private StringComparison Comparison =>
         MatchCaseBox.IsChecked == true ? StringComparison.CurrentCulture : StringComparison.CurrentCultureIgnoreCase;
 
-    private bool FindNext()
+    private bool FindNext(string term)
     {
-        var term = FindBox.Text;
         if (term.Length == 0)
             return false;
 
@@ -570,7 +1135,7 @@ public partial class MainWindow : Window
     private void ReplaceCurrent()
     {
         var term = FindBox.Text;
-        if (term.Length == 0)
+        if (term.Length == 0 || Editor.IsReadOnly)
             return;
 
         if (string.Equals(Editor.Selection.Text, term, Comparison))
@@ -578,13 +1143,13 @@ public partial class MainWindow : Window
             Editor.Selection.Text = ReplaceBox.Text;
             Editor.Selection.Select(Editor.Selection.End, Editor.Selection.End);
         }
-        FindNext();
+        FindNext(term);
     }
 
     private void ReplaceAll_Click(object sender, RoutedEventArgs e)
     {
         var term = FindBox.Text;
-        if (term.Length == 0)
+        if (term.Length == 0 || Editor.IsReadOnly)
             return;
 
         var count = 0;
@@ -637,7 +1202,15 @@ public partial class MainWindow : Window
             Editor.ScrollToVerticalOffset(Editor.VerticalOffset + rect.Top - Editor.ViewportHeight / 3);
     }
 
-    // ---------------------------------------------------------------- Menu de contexto (ortografia)
+    private void ScrollToTop(TextPointer position)
+    {
+        Editor.UpdateLayout();
+        var rect = position.GetCharacterRect(LogicalDirection.Forward);
+        if (!rect.IsEmpty)
+            Editor.ScrollToVerticalOffset(Math.Max(0, Editor.VerticalOffset + rect.Top - 24));
+    }
+
+    // ================================================================ Menu de contexto (ortografia)
 
     private void Editor_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {
@@ -645,7 +1218,7 @@ public partial class MainWindow : Window
         menu.Items.Clear();
 
         var position = Editor.GetPositionFromPoint(Mouse.GetPosition(Editor), snapToText: true);
-        var error = position is null ? null : Editor.GetSpellingError(position);
+        var error = position is null || Editor.IsReadOnly ? null : Editor.GetSpellingError(position);
 
         if (error is not null)
         {
@@ -672,11 +1245,11 @@ public partial class MainWindow : Window
         menu.Items.Add(new MenuItem { Header = "Selecionar tudo", Command = ApplicationCommands.SelectAll, CommandTarget = Editor });
     }
 
-    // ---------------------------------------------------------------- Zoom
+    // ================================================================ Zoom
 
     private void ZoomSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (ZoomTransform is null) return; // ainda inicializando
+        if (ZoomTransform is null || ZoomText is null) return; // ainda inicializando
         var scale = e.NewValue / 100.0;
         ZoomTransform.ScaleX = scale;
         ZoomTransform.ScaleY = scale;
@@ -694,45 +1267,15 @@ public partial class MainWindow : Window
     private void ZoomOut_Click(object sender, RoutedEventArgs e) => ZoomSlider.Value -= 10;
     private void ZoomReset_Click(object sender, RoutedEventArgs e) => ZoomSlider.Value = 100;
 
-    // ---------------------------------------------------------------- Tema
-
-    private void ThemeLight_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Light);
-    private void ThemeDark_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.Dark);
-    private void ThemeSystem_Click(object sender, RoutedEventArgs e) => ThemeManager.Apply(AppTheme.System);
-
-    /// <summary>
-    /// O tema Fluent usa botões grandes (bons para toque); numa barra de editor isso não cabe.
-    /// Valores locais têm prioridade sobre o estilo do tema, então valem nos dois temas.
-    /// </summary>
-    private void CompactToolbarButtons()
-    {
-        foreach (var toolBar in ToolBars.ToolBars)
-        {
-            foreach (var item in toolBar.Items.OfType<ButtonBase>())
-            {
-                item.Padding = new Thickness(6, 4, 6, 4);
-                item.Margin = new Thickness(1, 0, 1, 0);
-                item.MinWidth = 0;
-                item.MinHeight = 0;
-            }
-        }
-    }
-
-    private void UpdateThemeMenu()
-    {
-        ThemeLightItem.IsChecked = ThemeManager.Current == AppTheme.Light;
-        ThemeDarkItem.IsChecked = ThemeManager.Current == AppTheme.Dark;
-        ThemeSystemItem.IsChecked = ThemeManager.Current == AppTheme.System;
-    }
-
-    // ---------------------------------------------------------------- Ajuda
-
-    private void About_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show(this, "Anotado 1.0\nEditor de texto simples para Windows.",
-            "Sobre o Anotado", MessageBoxButton.OK, MessageBoxImage.Information);
-
-    // ---------------------------------------------------------------- Utilitários
+    // ================================================================ Utilitários
 
     private static double PtToDip(double pt) => pt * 96.0 / 72.0;
     private static double DipToPt(double dip) => dip * 72.0 / 96.0;
+
+    private static Brush Frozen(Color color)
+    {
+        var brush = new SolidColorBrush(color);
+        brush.Freeze();
+        return brush;
+    }
 }

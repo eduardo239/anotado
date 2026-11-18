@@ -98,6 +98,20 @@ public partial class MainWindow : Window
         // Página escura: o que sai do editor (copiar/arrastar) leva a tinta escura padrão,
         // e o que entra (colar/soltar) tem o preto convertido em cor automática.
         DataObject.AddCopyingHandler(Editor, Editor_Copying);
+
+        // Dicionário pessoal: o corretor roda em segundo plano, então a lista é aplicada pouco depois.
+        UserDictionary.Load();
+        _dictionaryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        _dictionaryTimer.Tick += (_, _) => { _dictionaryTimer.Stop(); ApplyUserDictionary(); };
+        Activated += (_, _) =>
+        {
+            // Volta do Bloco de Notas: relê a lista se o arquivo mudou.
+            if (UserDictionary.LastWrite != UserDictionary.LoadedAt)
+            {
+                UserDictionary.Load();
+                ApplyUserDictionary();
+            }
+        };
         Editor.AddHandler(CommandManager.ExecutedEvent, new ExecutedRoutedEventHandler((_, e) =>
         {
             if (e.Command == ApplicationCommands.Paste) NormalizeInk(Editor.Document);
@@ -538,6 +552,8 @@ public partial class MainWindow : Window
         var text = FullRange.Text;
         var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
         _completer.Rebuild(text, WordBeforeCaret());
+        _dictionaryTimer.Stop();
+        _dictionaryTimer.Start();
         var chars = text.Count(c => c != '\r' && c != '\n');
         var minutes = words == 0 ? 0 : (int)Math.Ceiling(words / 200.0); // ~200 palavras por minuto
 
@@ -1259,6 +1275,7 @@ public partial class MainWindow : Window
 
     /// <summary>Cor do texto "automático" quando ele sai do app: arquivo, impressão, área de transferência.</summary>
     private static readonly Brush PrintInk = Frozen(Color.FromRgb(0x26, 0x26, 0x26));
+    private static readonly Brush PrintLink = Frozen(Color.FromRgb(0x1A, 0x5F, 0xB4));
 
     /// <summary>
     /// O WPF grava no RTF a cor herdada do editor. Com a página escura ela seria clara,
@@ -1273,8 +1290,13 @@ public partial class MainWindow : Window
         }
 
         Editor.Foreground = PrintInk;
+        Editor.Resources["PaperLinkBrush"] = PrintLink; // sobrepõe o azul-claro dos links
         try { action(); }
-        finally { Editor.SetResourceReference(ForegroundProperty, "PaperInkBrush"); }
+        finally
+        {
+            Editor.Resources.Remove("PaperLinkBrush");
+            Editor.SetResourceReference(ForegroundProperty, "PaperInkBrush");
+        }
     }
 
     private void Editor_Copying(object sender, DataObjectCopyingEventArgs e)
@@ -1300,18 +1322,20 @@ public partial class MainWindow : Window
     /// <summary>
     /// Remove cores pretas/quase pretas explícitas (o RTF grava a cor herdada em todo o texto),
     /// para que o texto siga a tinta da página e continue legível na página escura.
+    /// Dentro de links, remove qualquer cor gravada: o link sempre usa a cor de link da página.
     /// </summary>
-    private static void NormalizeInk(DependencyObject node)
+    private static void NormalizeInk(DependencyObject node, bool insideLink = false)
     {
+        insideLink |= node is Hyperlink;
         if (node is FlowDocument or TextElement
             && node.ReadLocalValue(TextElement.ForegroundProperty) is SolidColorBrush { Color: var c }
-            && IsAutomaticInk(c))
+            && (insideLink || IsAutomaticInk(c)))
         {
             node.ClearValue(TextElement.ForegroundProperty);
         }
 
         foreach (var child in LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>())
-            NormalizeInk(child);
+            NormalizeInk(child, insideLink);
     }
 
     private static bool IsAutomaticInk(Color c)
@@ -1331,8 +1355,69 @@ public partial class MainWindow : Window
         PageAppButton.IsChecked = ThemeManager.CurrentPage == PageTheme.FollowApp;
     }
 
-    private void SpellToggle_Click(object sender, RoutedEventArgs e) =>
+    // ================================================================ Dicionário pessoal
+
+    private readonly DispatcherTimer _dictionaryTimer;
+
+    /// <summary>Erros de ortografia do documento, com proteção contra repetir o mesmo erro sem avançar.</summary>
+    private List<(TextRange Range, SpellingError Error)> SpellingErrors()
+    {
+        var errors = new List<(TextRange, SpellingError)>();
+        if (!SpellCheck.GetIsEnabled(Editor)) return errors;
+
+        var position = Editor.Document.ContentStart;
+        TextPointer? lastEnd = null;
+        for (var guard = 0; guard < 100_000; guard++)
+        {
+            position = Editor.GetNextSpellingErrorPosition(position, LogicalDirection.Forward);
+            if (position is null) break;
+
+            var range = Editor.GetSpellingErrorRange(position);
+            if (range is null || (lastEnd is not null && range.End.CompareTo(lastEnd) <= 0)) break;
+            if (Editor.GetSpellingError(position) is { } error)
+                errors.Add((range, error));
+            lastEnd = position = range.End;
+        }
+        return errors;
+    }
+
+    /// <summary>Ignora, nesta sessão, os erros que estão no dicionário pessoal.</summary>
+    private void ApplyUserDictionary()
+    {
+        foreach (var (range, error) in SpellingErrors())
+            if (UserDictionary.Contains(range.Text))
+                error.IgnoreAll();
+    }
+
+    private void AddToUserDictionary(string word, SpellingError error)
+    {
+        if (!UserDictionary.Add(word))
+        {
+            ShowStatus("Não foi possível gravar no dicionário pessoal.");
+            return;
+        }
+        error.IgnoreAll();
+        ShowStatus($"\"{word}\" adicionada ao dicionário.");
+    }
+
+    private void EditDictionary_Click(object sender, RoutedEventArgs e)
+    {
+        if (!UserDictionary.EnsureExists())
+        {
+            ShowStatus("Não foi possível criar o dicionário pessoal.");
+            return;
+        }
+        // Ao voltar para o app (Activated), as mudanças feitas no Bloco de Notas são recarregadas.
+        Process.Start(new ProcessStartInfo("notepad.exe", $"\"{UserDictionary.FilePath}\"") { UseShellExecute = true });
+    }
+
+    private void SpellToggle_Click(object sender, RoutedEventArgs e)
+    {
         SpellCheck.SetIsEnabled(Editor, SpellToggle.IsChecked == true);
+        // Religar o corretor esquece o "ignorar tudo": reaplica o dicionário pessoal.
+        _dictionaryTimer.Stop();
+        _dictionaryTimer.Start();
+    }
 
     private void Shortcuts_Click(object sender, RoutedEventArgs e) => new ShortcutsWindow(this).ShowDialog();
 
@@ -1596,6 +1681,14 @@ public partial class MainWindow : Window
             var ignore = new MenuItem { Header = "Ignorar tudo" };
             ignore.Click += (_, _) => error.IgnoreAll();
             menu.Items.Add(ignore);
+
+            var word = Editor.GetSpellingErrorRange(position!)?.Text.Trim();
+            if (!string.IsNullOrEmpty(word))
+            {
+                var add = new MenuItem { Header = $"Adicionar \"{word}\" ao dicionário" };
+                add.Click += (_, _) => AddToUserDictionary(word, error);
+                menu.Items.Add(add);
+            }
             menu.Items.Add(new Separator());
         }
 

@@ -207,6 +207,10 @@
                         <ToggleButton x:Name="SpellToggle" Style="{StaticResource IconToggle}" IsChecked="True" Click="SpellToggle_Click" Padding="10,6">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="abc" FontWeight="SemiBold" TextDecorations="Underline" Margin="0,0,8,0" /><TextBlock Text="Verificar ortografia" /></StackPanel>
                         </ToggleButton>
+                        <Button Style="{StaticResource IconButton}" Click="EditDictionary_Click" Padding="10,6"
+                                ToolTip="Abre a lista de palavras que o corretor aceita (uma por linha). Para incluir uma palavra, clique nela com o botão direito.">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE82D;" Margin="0,0,8,0" /><TextBlock Text="Dicionário pessoal" /></StackPanel>
+                        </Button>
                         <ToggleButton x:Name="AutoCompleteToggle" Style="{StaticResource IconToggle}" Click="AutoCompleteToggle_Click" Padding="10,6"
                                       ToolTip="Sugere o fim da palavra enquanto você digita. Tab aceita, Esc dispensa.">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="ab|" FontWeight="SemiBold" Margin="0,0,8,0" /><TextBlock Text="Autocompletar" /></StackPanel>
@@ -406,6 +410,11 @@
                                                     <Setter Property="Foreground" Value="#262626" />
                                                 </DataTrigger>
                                             </Style.Triggers>
+                                        </Style>
+                                        <!-- Links: cor própria da página (o padrão do sistema é um cinza sem contraste) -->
+                                        <Style TargetType="Hyperlink">
+                                            <Setter Property="Foreground" Value="{DynamicResource PaperLinkBrush}" />
+                                            <Setter Property="TextDecorations" Value="Underline" />
                                         </Style>
                                         <Style TargetType="Run">
                                             <Style.Triggers>

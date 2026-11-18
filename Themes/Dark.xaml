@@ -25,4 +25,5 @@
     <SolidColorBrush x:Key="PaperLineBrush" Color="#DAD8D0" />
     <SolidColorBrush x:Key="PaperMutedBrush" Color="#85857E" />
     <SolidColorBrush x:Key="PaperInkBrush" Color="#262626" />
+    <SolidColorBrush x:Key="PaperLinkBrush" Color="#1A5FB4" />
 </ResourceDictionary>

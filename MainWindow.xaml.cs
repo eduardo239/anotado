@@ -30,7 +30,29 @@ public sealed record OutlineEntry(string Number, string Text, int Level, Paragra
 public partial class MainWindow : Window
 {
     private const string AppName = "Anotado";
-    private const string DefaultFont = "Calibri";
+    /// <summary>
+    /// Nome da fonte de cada conjunto (na ordem de <see cref="FontPreset"/>), como está dentro dos
+    /// arquivos em Assets/fonts. É o nome gravado no RTF.
+    /// </summary>
+    private static readonly string[] PresetNames = ["Inter", "Merriweather 18pt", "JetBrains Mono"];
+
+    /// <summary>Fontes usadas pelos conjuntos em versões anteriores: reconhecidas ao abrir arquivos antigos.</summary>
+    private static readonly string[] LegacyPresetNames = ["Calibri", "Georgia", "Consolas"];
+
+    /// <summary>As fontes embutidas no app (funcionam mesmo sem estarem instaladas no Windows).</summary>
+    private static readonly FontFamily[] PresetFamilies = PresetNames
+        .Select(name => new FontFamily(new Uri("pack://application:,,,/"), "./Assets/fonts/#" + name))
+        .ToArray();
+
+    private static string[] NamesOf(FontPreset preset) => [PresetNames[(int)preset], LegacyPresetNames[(int)preset]];
+
+    /// <summary>Nome da família sem o caminho de fonte embutida ("./Assets/fonts/#Inter" → "Inter").</summary>
+    private static string FamilyName(FontFamily family)
+    {
+        var source = family.Source;
+        var name = source[(source.LastIndexOf('#') + 1)..];
+        return name.Split(',')[0].Trim();
+    }
     private const double BodySizePt = 12;
     private const string FileFilter =
         "Documento RTF (*.rtf)|*.rtf|Texto sem formatação (*.txt)|*.txt";
@@ -98,6 +120,7 @@ public partial class MainWindow : Window
         // Página escura: o que sai do editor (copiar/arrastar) leva a tinta escura padrão,
         // e o que entra (colar/soltar) tem o preto convertido em cor automática.
         DataObject.AddCopyingHandler(Editor, Editor_Copying);
+        DataObject.AddPastingHandler(Editor, Editor_Pasting); // dentro de bloco de código: só texto
 
         // Dicionário pessoal: o corretor roda em segundo plano, então a lista é aplicada pouco depois.
         UserDictionary.Load();
@@ -114,10 +137,10 @@ public partial class MainWindow : Window
         };
         Editor.AddHandler(CommandManager.ExecutedEvent, new ExecutedRoutedEventHandler((_, e) =>
         {
-            if (e.Command == ApplicationCommands.Paste) NormalizeInk(Editor.Document);
+            if (e.Command == ApplicationCommands.Paste) NormalizeIncoming();
         }), handledEventsToo: true);
         Editor.AddHandler(DragDrop.DropEvent, new DragEventHandler((_, _) =>
-            Dispatcher.BeginInvoke(DispatcherPriority.Background, () => NormalizeInk(Editor.Document))), handledEventsToo: true);
+            Dispatcher.BeginInvoke(DispatcherPriority.Background, NormalizeIncoming)), handledEventsToo: true);
 
         // Estatísticas e estrutura são recalculadas pouco depois de parar de digitar.
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
@@ -163,13 +186,13 @@ public partial class MainWindow : Window
 
     private static FlowDocument CreateBaseDocument() => new()
     {
-        FontFamily = new FontFamily(DefaultFont),
+        FontFamily = PresetFamilies[(int)Settings.FontPreset],
         FontSize = PtToDip(BodySizePt),
         TextAlignment = TextAlignment.Left, // o padrão do WPF é justificado
         Language = System.Windows.Markup.XmlLanguage.GetLanguage("pt-BR"),
     };
 
-    private void SetDocument(FlowDocument doc, string? path)
+    private void SetDocument(FlowDocument doc, string? path, FontPreset preset)
     {
         _loading = true;
         Editor.Document = doc;
@@ -178,6 +201,8 @@ public partial class MainWindow : Window
 
         _filePath = path;
         _dirty = false;
+        _docPreset = preset;
+        SyncFontPresetButtons();
         ApplyPageSetup();
         UpdateDocumentInfo();
         RefreshStatsAndOutline();
@@ -188,7 +213,7 @@ public partial class MainWindow : Window
     {
         var doc = CreateBaseDocument();
         doc.Blocks.Add(new Paragraph());
-        SetDocument(doc, null);
+        SetDocument(doc, null, Settings.FontPreset);
     }
 
     private void LoadFile(string path)
@@ -209,7 +234,12 @@ public partial class MainWindow : Window
             }
 
             NormalizeInk(doc);
-            SetDocument(doc, path);
+
+            // O RTF grava a fonte em todo o texto: reconhece o conjunto usado e devolve a fonte ao documento.
+            var preset = DetectFontPreset(doc) ?? Settings.FontPreset;
+            UseFontPreset(doc, preset, NamesOf(preset));
+            PrepareCodeBlocks(doc); // o RTF perde espaçamentos e a fonte embutida dos blocos de código
+            SetDocument(doc, path, preset);
         }
         catch (Exception ex)
         {
@@ -228,8 +258,11 @@ public partial class MainWindow : Window
             }
             else
             {
-                using var stream = File.Create(path);
-                WithPrintInk(() => FullRange.Save(stream, DataFormats.Rtf));
+                using var buffer = new MemoryStream();
+                WithExportFormatting(() => FullRange.Save(buffer, DataFormats.Rtf));
+                // O RTF do WPF é ASCII (acentos vêm como \'xx); Latin1 preserva qualquer byte.
+                var rtf = PlainFontNames(Encoding.Latin1.GetString(buffer.ToArray()));
+                File.WriteAllBytes(path, Encoding.Latin1.GetBytes(rtf));
             }
 
             _filePath = path;
@@ -392,10 +425,13 @@ public partial class MainWindow : Window
         copy.Resources.Add(typeof(Paragraph), Editor.Resources[typeof(Paragraph)]);
         using (var buffer = new MemoryStream())
         {
-            WithPrintInk(() => FullRange.Save(buffer, DataFormats.XamlPackage));
+            WithExportFormatting(() => FullRange.Save(buffer, DataFormats.XamlPackage));
             buffer.Position = 0;
             new TextRange(copy.ContentStart, copy.ContentEnd).Load(buffer, DataFormats.XamlPackage);
         }
+        // A cópia veio com o nome da fonte; volta para a fonte embutida (pode não estar instalada).
+        UseFontPreset(copy, _docPreset, NamesOf(_docPreset));
+        PrepareCodeBlocks(copy);
 
         copy.PageWidth = dialog.PrintableAreaWidth;
         copy.PageHeight = dialog.PrintableAreaHeight;
@@ -423,6 +459,7 @@ public partial class MainWindow : Window
 
         _suggestionDismissed = false;
         UpdateSuggestion();
+        ScheduleCodeRefresh(e);
     }
 
     private void Editor_SelectionChanged(object sender, RoutedEventArgs e)
@@ -447,7 +484,8 @@ public partial class MainWindow : Window
     {
         string? suggestion = null;
         if (Settings.AutoComplete && !_suggestionDismissed && !_loading && !Editor.IsReadOnly
-            && Editor.IsKeyboardFocusWithin && Editor.Selection.IsEmpty)
+            && Editor.IsKeyboardFocusWithin && Editor.Selection.IsEmpty
+            && CurrentCodeBlock() is null) // nada de sugestão de palavras dentro de código
         {
             // Só sugere no fim da palavra (nada de letra logo depois do cursor).
             var after = Editor.CaretPosition.GetTextInRun(LogicalDirection.Forward);
@@ -471,7 +509,12 @@ public partial class MainWindow : Window
 
     // O layout do texto recém-digitado só fica pronto depois desta passada; posiciona em seguida.
     private void ScheduleSuggestionLayout() =>
-        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, LayoutSuggestion);
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, () =>
+        {
+            LayoutSuggestion();
+            LayoutTableHandles(); // mesmos gatilhos: digitação, cursor, rolagem, tamanho
+            LayoutCodeBlocks();
+        });
 
     private void LayoutSuggestion()
     {
@@ -655,7 +698,7 @@ public partial class MainWindow : Window
             AlignJustifyButton.IsChecked = align == TextAlignment.Justify;
 
             if (!FontFamilyBox.IsKeyboardFocusWithin)
-                FontFamilyBox.Text = sel.GetPropertyValue(TextElement.FontFamilyProperty) is FontFamily ff ? ff.Source : "";
+                FontFamilyBox.Text = sel.GetPropertyValue(TextElement.FontFamilyProperty) is FontFamily ff ? FamilyName(ff) : "";
 
             if (!FontSizeBox.IsKeyboardFocusWithin)
                 FontSizeBox.Text = sel.GetPropertyValue(TextElement.FontSizeProperty) is double size
@@ -808,6 +851,104 @@ public partial class MainWindow : Window
         Editor.Focus();
     }
 
+    // ---------------------------------------------------------------- Conjunto de fontes
+
+    private FontPreset _docPreset;
+
+    private bool _syncingPresetButtons;
+
+    /// <summary>Marca só o botão do conjunto em uso (clicar no já marcado não o desmarca).</summary>
+    private void SyncFontPresetButtons()
+    {
+        _syncingPresetButtons = true;
+        PresetSansButton.IsChecked = _docPreset == FontPreset.SansSerif;
+        PresetSerifButton.IsChecked = _docPreset == FontPreset.Serif;
+        PresetMonoButton.IsChecked = _docPreset == FontPreset.Monospace;
+        _syncingPresetButtons = false;
+    }
+
+    /// <summary>
+    /// Reage à marcação (Checked/Unchecked) em vez do Click: assim funciona com mouse, teclado
+    /// e também com leitores de tela, que alternam o botão sem gerar Click.
+    /// </summary>
+    private void FontPreset_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingPresetButtons || Editor is null)
+            return;
+
+        var button = (ToggleButton)sender;
+        var preset = (FontPreset)int.Parse((string)button.Tag);
+        if (button.IsChecked == true && preset != _docPreset && !Editor.IsReadOnly)
+        {
+            // Tira a fonte antiga e a nova de onde estiverem gravadas, para tudo seguir o documento.
+            Editor.BeginChange();
+            UseFontPreset(Editor.Document, preset, [.. NamesOf(_docPreset), .. NamesOf(preset)]);
+            Editor.EndChange();
+
+            _docPreset = preset;
+            Settings.FontPreset = preset; // documentos novos começam com o último conjunto escolhido
+            Settings.Save();
+            if (!_dirty)
+            {
+                _dirty = true;
+                UpdateDocumentInfo();
+            }
+            ScheduleToolbarSync();
+        }
+        SyncFontPresetButtons();
+        Editor.Focus();
+    }
+
+    /// <summary>
+    /// Define a fonte do documento e remove as fontes explícitas listadas em <paramref name="clear"/>,
+    /// para que texto, títulos e citações herdem a nova fonte. Outras fontes escolhidas à mão ficam.
+    /// </summary>
+    private static void UseFontPreset(FlowDocument doc, FontPreset preset, string[] clear)
+    {
+        doc.FontFamily = PresetFamilies[(int)preset];
+        ClearFonts(doc, clear);
+    }
+
+    private static void ClearFonts(DependencyObject node, string[] names)
+    {
+        if (node is Table code && IsCodeBlock(code))
+            return; // o bloco de código tem fonte própria
+        if (node is TextElement element
+            && element.ReadLocalValue(TextElement.FontFamilyProperty) is FontFamily family
+            && names.Contains(FamilyName(family), StringComparer.OrdinalIgnoreCase))
+        {
+            element.ClearValue(TextElement.FontFamilyProperty);
+        }
+
+        foreach (var child in LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>())
+            ClearFonts(child, names);
+    }
+
+    /// <summary>O conjunto cuja fonte cobre mais texto, ou null se o texto não usa nenhum deles.</summary>
+    private static FontPreset? DetectFontPreset(FlowDocument doc)
+    {
+        var chars = new int[PresetNames.Length];
+        void Count(DependencyObject node)
+        {
+            if (node is Table code && IsCodeBlock(code))
+                return; // código em monoespaçada não define o conjunto do documento
+            if (node is Run run)
+            {
+                var name = FamilyName(run.FontFamily);
+                var index = Array.FindIndex(PresetNames, f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                    index = Array.FindIndex(LegacyPresetNames, f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase));
+                if (index >= 0) chars[index] += run.Text.Length;
+            }
+            foreach (var child in LogicalTreeHelper.GetChildren(node).OfType<DependencyObject>())
+                Count(child);
+        }
+        Count(doc);
+
+        var best = Array.IndexOf(chars, chars.Max());
+        return chars[best] == 0 ? null : (FontPreset)best;
+    }
+
     // ---------------------------------------------------------------- Fonte
 
     private void FontFamilyBox_DropDownClosed(object? sender, EventArgs e)
@@ -941,44 +1082,6 @@ public partial class MainWindow : Window
             MessageBox.Show(this, $"Não foi possível inserir a imagem.\n\n{ex.Message}",
                 AppName, MessageBoxButton.OK, MessageBoxImage.Error);
         }
-    }
-
-    private void InsertTable_Click(object sender, RoutedEventArgs e)
-    {
-        const int rows = 3, columns = 3;
-
-        var table = new Table { CellSpacing = 0, Margin = new Thickness(0, 4, 0, 12) };
-        for (var c = 0; c < columns; c++)
-            table.Columns.Add(new TableColumn());
-
-        var group = new TableRowGroup();
-        for (var r = 0; r < rows; r++)
-        {
-            var row = new TableRow();
-            for (var c = 0; c < columns; c++)
-            {
-                row.Cells.Add(new TableCell(new Paragraph { Margin = new Thickness(0) })
-                {
-                    BorderBrush = TableLine,
-                    BorderThickness = new Thickness(0.75),
-                    Padding = new Thickness(8, 5, 8, 5),
-                });
-            }
-            group.Rows.Add(row);
-        }
-        table.RowGroups.Add(group);
-
-        var current = Editor.CaretPosition.Paragraph;
-        if (current?.SiblingBlocks is { } siblings)
-            siblings.InsertAfter(current, table);
-        else
-            Editor.Document.Blocks.Add(table);
-
-        if (table.NextBlock is null)
-            table.SiblingBlocks!.Add(new Paragraph());
-
-        Editor.CaretPosition = group.Rows[0].Cells[0].ContentStart.GetInsertionPosition(LogicalDirection.Forward);
-        Editor.Focus();
     }
 
     private void InsertLink_Click(object sender, RoutedEventArgs e)
@@ -1278,34 +1381,37 @@ public partial class MainWindow : Window
     private static readonly Brush PrintLink = Frozen(Color.FromRgb(0x1A, 0x5F, 0xB4));
 
     /// <summary>
-    /// O WPF grava no RTF a cor herdada do editor. Com a página escura ela seria clara,
-    /// então durante a gravação o editor volta temporariamente à tinta escura.
+    /// Prepara o que sai do app (arquivo, impressão, área de transferência). O WPF grava no RTF
+    /// a fonte e a cor herdadas do editor, então durante a gravação:
+    /// - a fonte embutida vira só o nome ("./Assets/fonts/#Inter" seria gravado literalmente);
+    /// - com a página escura, o texto volta à tinta escura e os links ao azul da página clara.
     /// </summary>
-    private void WithPrintInk(Action action)
+    private void WithExportFormatting(Action action)
     {
-        if (!ThemeManager.IsPaperDark)
+        var dark = ThemeManager.IsPaperDark;
+        Editor.Document.FontFamily = new FontFamily(PresetNames[(int)_docPreset]);
+        if (dark)
         {
-            action();
-            return;
+            Editor.Foreground = PrintInk;
+            Editor.Resources["PaperLinkBrush"] = PrintLink; // sobrepõe o azul-claro dos links
         }
-
-        Editor.Foreground = PrintInk;
-        Editor.Resources["PaperLinkBrush"] = PrintLink; // sobrepõe o azul-claro dos links
         try { action(); }
         finally
         {
-            Editor.Resources.Remove("PaperLinkBrush");
-            Editor.SetResourceReference(ForegroundProperty, "PaperInkBrush");
+            Editor.Document.FontFamily = PresetFamilies[(int)_docPreset];
+            if (dark)
+            {
+                Editor.Resources.Remove("PaperLinkBrush");
+                Editor.SetResourceReference(ForegroundProperty, "PaperInkBrush");
+            }
         }
     }
 
     private void Editor_Copying(object sender, DataObjectCopyingEventArgs e)
     {
-        if (!ThemeManager.IsPaperDark) return;
-
-        // Regrava os formatos com formatação usando a tinta escura.
+        // Regrava os formatos com formatação usando o nome da fonte (e a tinta escura, se for o caso).
         var range = new TextRange(Editor.Selection.Start, Editor.Selection.End);
-        WithPrintInk(() =>
+        WithExportFormatting(() =>
         {
             foreach (var format in new[] { DataFormats.Rtf, DataFormats.Xaml, DataFormats.XamlPackage })
             {
@@ -1314,7 +1420,7 @@ public partial class MainWindow : Window
                 range.Save(buffer, format);
                 e.DataObject.SetData(format, format == DataFormats.XamlPackage
                     ? buffer
-                    : Encoding.UTF8.GetString(buffer.ToArray()));
+                    : PlainFontNames(Encoding.UTF8.GetString(buffer.ToArray())));
             }
         });
     }
@@ -1324,6 +1430,17 @@ public partial class MainWindow : Window
     /// para que o texto siga a tinta da página e continue legível na página escura.
     /// Dentro de links, remove qualquer cor gravada: o link sempre usa a cor de link da página.
     /// </summary>
+    /// <summary>
+    /// Depois de colar/soltar: preto vira cor automática, as fontes do conjunto (que chegam só
+    /// com o nome) voltam a seguir o documento, e blocos de código recebem estilo e cores.
+    /// </summary>
+    private void NormalizeIncoming()
+    {
+        NormalizeInk(Editor.Document);
+        ClearFonts(Editor.Document, NamesOf(_docPreset));
+        PrepareCodeBlocks(Editor.Document);
+    }
+
     private static void NormalizeInk(DependencyObject node, bool insideLink = false)
     {
         insideLink |= node is Hyperlink;
@@ -1423,6 +1540,12 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (HandleCodeKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         switch (e.Key)
         {
             case Key.Tab when _suggestion is not null && Keyboard.Modifiers == ModifierKeys.None && Editor.IsKeyboardFocusWithin:

@@ -120,6 +120,19 @@
                             <ComboBoxItem Content="Título 2" Tag="Heading2" FontWeight="SemiBold" />
                             <ComboBoxItem Content="Citação" Tag="Quote" FontStyle="Italic" />
                         </ComboBox>
+                        <!-- Conjunto de fontes do documento (texto e títulos): cada botão mostra "Aa" na própria fonte -->
+                        <ToggleButton x:Name="PresetSansButton" Style="{StaticResource IconToggle}" Margin="6,0,0,0" Tag="0" Checked="FontPreset_Toggled" Unchecked="FontPreset_Toggled"
+                                      ToolTip="Sem serifa (Inter): muda o texto e os títulos do documento">
+                            <TextBlock Text="Aa" FontFamily="./Assets/fonts/#Inter" FontSize="15" Width="22" TextAlignment="Center" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="PresetSerifButton" Style="{StaticResource IconToggle}" Tag="1" Checked="FontPreset_Toggled" Unchecked="FontPreset_Toggled"
+                                      ToolTip="Com serifa (Merriweather): muda o texto e os títulos do documento">
+                            <TextBlock Text="Aa" FontFamily="./Assets/fonts/#Merriweather 18pt" FontSize="15" Width="22" TextAlignment="Center" />
+                        </ToggleButton>
+                        <ToggleButton x:Name="PresetMonoButton" Style="{StaticResource IconToggle}" Tag="2" Checked="FontPreset_Toggled" Unchecked="FontPreset_Toggled"
+                                      ToolTip="Monoespaçada (JetBrains Mono): muda o texto e os títulos do documento">
+                            <TextBlock Text="Aa" FontFamily="./Assets/fonts/#JetBrains Mono" FontSize="14" Width="22" TextAlignment="Center" />
+                        </ToggleButton>
                         <Border Style="{StaticResource VDivider}" />
                         <ComboBox x:Name="FontFamilyBox" Width="150" IsEditable="True" ToolTip="Fonte"
                                   TextSearch.TextPath="Source"
@@ -171,6 +184,10 @@
                         </Button>
                         <Button Style="{StaticResource IconButton}" Click="InsertTable_Click" Padding="10,6">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE8A9;" Margin="0,0,8,0" /><TextBlock Text="Tabela" /></StackPanel>
+                        </Button>
+                        <Button Style="{StaticResource IconButton}" Click="InsertCode_Click" Padding="10,6"
+                                ToolTip="Bloco de código com números de linha e cores de sintaxe. Se houver texto selecionado, ele vira o código.">
+                            <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE943;" Margin="0,0,8,0" /><TextBlock Text="Código" /></StackPanel>
                         </Button>
                         <Button Style="{StaticResource IconButton}" Click="InsertLink_Click" Padding="10,6">
                             <StackPanel Orientation="Horizontal"><TextBlock Style="{StaticResource Icon}" Text="&#xE71B;" Margin="0,0,8,0" /><TextBlock Text="Link" /></StackPanel>
@@ -432,6 +449,11 @@
                                 <Canvas x:Name="SuggestionLayer" IsHitTestVisible="False" ClipToBounds="True">
                                     <TextBlock x:Name="SuggestionText" Foreground="{DynamicResource PaperMutedBrush}" Visibility="Collapsed" />
                                 </Canvas>
+                                <!-- Blocos de código: números de linha (só desenho, não vão para o arquivo) -->
+                                <Canvas x:Name="CodeLayer" IsHitTestVisible="False" ClipToBounds="True" />
+                                <!-- Tabela: botões (+)/(−) nas bordas. Sem fundo, então cliques fora dos botões vão para o editor. -->
+                                <Canvas x:Name="TableLayer" ClipToBounds="True" />
+
                                 </Grid>
                             </DockPanel>
                             </Border>

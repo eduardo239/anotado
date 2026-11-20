@@ -13,6 +13,7 @@ public sealed class AppSettings
 
     public AppTheme Theme { get; set; } = AppTheme.System;
     public PageTheme PageTheme { get; set; } = PageTheme.Light;
+    public FontPreset FontPreset { get; set; } = FontPreset.SansSerif; // conjunto usado em documentos novos
     public int WordGoal { get; set; } = 500;
     public PageFormat PageFormat { get; set; } = PageFormat.A4;
     public bool Landscape { get; set; }
@@ -51,6 +52,9 @@ public sealed class AppSettings
 }
 
 public enum PageFormat { A4, Carta, Oficio }
+
+/// <summary>Conjunto de fontes do documento: vale para o texto e para os títulos.</summary>
+public enum FontPreset { SansSerif, Serif, Monospace }
 
 public enum PageMargins { Estreita, Normal, Larga }
 
